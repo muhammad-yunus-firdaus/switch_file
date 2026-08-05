@@ -328,107 +328,203 @@ async function docxToPdf(file: File): Promise<Blob> {
   return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
 }
 
-// ============================================================================
-// PPTX → PDF
-// ============================================================================
-
 async function pptxToPdf(file: File): Promise<Blob> {
-  const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
+  const { PDFDocument } = await import('pdf-lib');
   const JSZip = (await import('jszip')).default;
-  const fontkit = (await import('@pdf-lib/fontkit')).default;
-
-  const arrayBuffer = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(arrayBuffer);
-
-  const slideFiles = Object.keys(zip.files).filter(name =>
-    /^ppt\/slides\/slide\d+\.xml$/.test(name)
-  );
-
-  if (slideFiles.length === 0) {
-    throw new Error('Invalid PPTX file — no slides found');
-  }
-
-  slideFiles.sort((a, b) => {
-    const numA = parseInt(a.replace(/\D/g, ''), 10);
-    const numB = parseInt(b.replace(/\D/g, ''), 10);
-    return numA - numB;
-  });
-
-  const pdfDoc = await PDFDocument.create();
-  pdfDoc.registerFontkit(fontkit);
-
-  let font;
-  let boldFont;
-  let isCustomFont = false;
 
   try {
-    const regBytes = await getCustomFontRegular();
-    const boldBytes = await getCustomFontBold();
-    font = await pdfDoc.embedFont(regBytes);
-    boldFont = await pdfDoc.embedFont(boldBytes);
-    isCustomFont = true;
-  } catch (e) {
-    console.warn('Failed to embed Roboto, falling back to Helvetica:', e);
-    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  }
+    const arrayBuffer = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
 
-  const PAGE_WIDTH = 842;
-  const PAGE_HEIGHT = 595;
-  const MARGIN = 50;
-
-  for (let i = 0; i < slideFiles.length; i++) {
-    const slideXml = await zip.file(slideFiles[i])?.async('text');
-    if (!slideXml) continue;
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(slideXml, 'application/xml');
-    
-    const textNodes = doc.getElementsByTagNameNS(
-      'http://schemas.openxmlformats.org/drawingml/2006/main',
-      't'
+    const slideFiles = Object.keys(zip.files).filter(name =>
+      /^ppt\/slides\/slide\d+\.xml$/.test(name)
     );
 
-    const slideTexts: string[] = [];
-    for (let j = 0; j < textNodes.length; j++) {
-      const val = textNodes[j].textContent;
-      if (val && val.trim() !== '') {
-        slideTexts.push(val.trim());
-      }
+    if (slideFiles.length === 0) {
+      throw new Error('Invalid PPTX file — no slides found');
     }
 
-    const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-    
-    drawTextSafely(page, `Slide ${i + 1}`, {
-      x: MARGIN,
-      y: PAGE_HEIGHT - MARGIN,
-      size: 16,
-      font: boldFont,
-      color: rgb(0.15, 0.25, 0.45),
-      isCustomFont,
+    slideFiles.sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ''), 10);
+      const numB = parseInt(b.replace(/\D/g, ''), 10);
+      return numA - numB;
     });
 
-    let y = PAGE_HEIGHT - MARGIN - 40;
-    
-    for (const paragraph of slideTexts) {
-      if (y < MARGIN) break;
-      const isHeader = paragraph.length < 40 && y === (PAGE_HEIGHT - MARGIN - 40);
-
-      drawTextSafely(page, paragraph.substring(0, 100), {
-        x: MARGIN,
-        y,
-        size: isHeader ? 13 : 11,
-        font: isHeader ? boldFont : font,
-        color: rgb(0.12, 0.16, 0.23),
-        isCustomFont,
-      });
-
-      y -= 22;
+    let slideWidth = 960;
+    let slideHeight = 540;
+    try {
+      const presentationXml = await zip.file('ppt/presentation.xml')?.async('text');
+      if (presentationXml) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(presentationXml, 'application/xml');
+        const sldSz = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'sldSz')[0];
+        if (sldSz) {
+          const cx = parseInt(sldSz.getAttribute('cx') || '', 10);
+          const cy = parseInt(sldSz.getAttribute('cy') || '', 10);
+          if (!isNaN(cx) && !isNaN(cy)) {
+            slideWidth = Math.round(cx / 9525);
+            slideHeight = Math.round(cy / 9525);
+          }
+        }
+      }
+    } catch {
+      // Widescreen default
     }
-  }
 
-  const pdfBytes = await pdfDoc.save();
-  return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+    const pdfDoc = await PDFDocument.create();
+
+    for (let i = 0; i < slideFiles.length; i++) {
+      const slideFile = slideFiles[i];
+      const slideXml = await zip.file(slideFile)?.async('text');
+      if (!slideXml) continue;
+
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(slideXml, 'application/xml');
+
+      const relsMap = new Map<string, string>();
+      try {
+        const slideName = slideFile.split('/').pop();
+        const relsFile = `ppt/slides/_rels/${slideName}.rels`;
+        const relsXml = await zip.file(relsFile)?.async('text');
+        if (relsXml) {
+          const relsDoc = parser.parseFromString(relsXml, 'application/xml');
+          const relationships = relsDoc.getElementsByTagName('Relationship');
+          for (let r = 0; r < relationships.length; r++) {
+            const id = relationships[r].getAttribute('Id');
+            const target = relationships[r].getAttribute('Target');
+            if (id && target) {
+              const cleanTarget = target.replace(/^\.\.\//, 'ppt/');
+              relsMap.set(id, cleanTarget);
+            }
+          }
+        }
+      } catch {
+        // Safe skip rels
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = slideWidth;
+      canvas.height = slideHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, slideWidth, slideHeight);
+
+      const pics = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'pic');
+      for (let p = 0; p < pics.length; p++) {
+        const pic = pics[p];
+        const xfrm = pic.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'xfrm')[0];
+        if (!xfrm) continue;
+        const off = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'off')[0];
+        const ext = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'ext')[0];
+        if (!off || !ext) continue;
+
+        const cx = parseInt(off.getAttribute('x') || '0', 10);
+        const cy = parseInt(off.getAttribute('y') || '0', 10);
+        const wWidth = parseInt(ext.getAttribute('cx') || '0', 10);
+        const wHeight = parseInt(ext.getAttribute('cy') || '0', 10);
+
+        const x = Math.round(cx / 9525);
+        const y = Math.round(cy / 9525);
+        const w = Math.round(wWidth / 9525);
+        const h = Math.round(wHeight / 9525);
+
+        const blip = pic.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip')[0];
+        if (!blip) continue;
+        const embedId = blip.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed') || blip.getAttribute('r:embed');
+        if (!embedId) continue;
+
+        const targetPath = relsMap.get(embedId);
+        if (targetPath && zip.file(targetPath)) {
+          const imgBlob = await zip.file(targetPath)?.async('blob');
+          if (imgBlob) {
+            const url = URL.createObjectURL(imgBlob);
+            const img = new Image();
+            await new Promise((resolve) => {
+              img.onload = resolve;
+              img.onerror = resolve;
+              img.src = url;
+            });
+            ctx.drawImage(img, x, y, w, h);
+            URL.revokeObjectURL(url);
+          }
+        }
+      }
+
+      const shapes = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'sp');
+      for (let s = 0; s < shapes.length; s++) {
+        const shape = shapes[s];
+        const txBody = shape.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'txBody')[0] || shape.getElementsByTagName('p:txBody')[0];
+        if (!txBody) continue;
+
+        const xfrm = shape.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'xfrm')[0] || shape.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'xfrm')[0];
+        if (!xfrm) continue;
+        const off = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'off')[0];
+        const ext = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'ext')[0];
+        if (!off || !ext) continue;
+
+        const cx = parseInt(off.getAttribute('x') || '0', 10);
+        const cy = parseInt(off.getAttribute('y') || '0', 10);
+        const wWidth = parseInt(ext.getAttribute('cx') || '0', 10);
+
+        const x = Math.round(cx / 9525);
+        const y = Math.round(cy / 9525);
+        const w = Math.round(wWidth / 9525);
+
+        const paragraphs = txBody.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'p');
+        let currentTextY = y + 16;
+
+        for (let p = 0; p < paragraphs.length; p++) {
+          const textNodes = paragraphs[p].getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 't');
+          let textStr = '';
+          for (let t = 0; t < textNodes.length; t++) {
+            textStr += textNodes[t].textContent || '';
+          }
+
+          if (textStr.trim()) {
+            ctx.fillStyle = '#1E293B';
+            ctx.font = '14px Arial, sans-serif';
+
+            const words = textStr.split(' ');
+            let line = '';
+            let currentLineY = currentTextY;
+
+            for (let n = 0; n < words.length; n++) {
+              const testLine = line + words[n] + ' ';
+              const metrics = ctx.measureText(testLine);
+              const testWidth = metrics.width;
+              if (testWidth > (w - 16) && n > 0) {
+                ctx.fillText(line, x + 8, currentLineY);
+                line = words[n] + ' ';
+                currentLineY += 18;
+              } else {
+                line = testLine;
+              }
+            }
+            ctx.fillText(line, x + 8, currentLineY);
+            currentTextY = currentLineY + 24;
+          }
+        }
+      }
+
+      const slidePngDataUrl = canvas.toDataURL('image/png');
+      const page = pdfDoc.addPage([slideWidth, slideHeight]);
+      const image = await pdfDoc.embedPng(slidePngDataUrl);
+      page.drawImage(image, {
+        x: 0,
+        y: 0,
+        width: slideWidth,
+        height: slideHeight,
+      });
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+  } catch (error) {
+    console.error('PPTX to PDF error:', error);
+    throw new Error('Gagal memuat elemen gambar PPTX. Pastikan file PPTX tidak terkunci atau coba simpan sebagai PDF langsung melalui Microsoft PowerPoint.');
+  }
 }
 
 // ============================================================================
