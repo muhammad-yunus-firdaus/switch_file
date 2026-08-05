@@ -9,7 +9,7 @@
 
 ---
 
-## 🚀 Mengapa SwitchFile? (Problem & Solution)
+## Mengapa SwitchFile? (Problem & Solution)
 
 1. **Jaminan Privasi Total:** Konverter file konvensional mengirim berkas sensitif Anda ke server pihak ketiga. SwitchFile memproses semuanya di dalam sandboxed RAM browser Anda secara lokal menggunakan WebAssembly (WASM).
 2. **Tanpa Batasan File & Antrean:** Tidak ada limitasi ukuran file harian, throttling kecepatan unduh, atau keharusan berlangganan.
@@ -17,7 +17,7 @@
 
 ---
 
-## ✨ Fitur Utama
+## Fitur Utama
 
 - **Multi-Format Document & Image Converter:** Konversi bolak-balik antar format populer:
   - **Dokumen & Presentasi:** `PDF`, `DOCX`, `XLSX`, `PPTX`, `TXT`
@@ -25,14 +25,14 @@
 - **Top Quick Actions Presets:** Konversi instan dengan 1-klik untuk alur kerja cepat:
   - `JPG to PDF` | `PNG to WebP` | `PPTX to PDF` | `PDF to PPTX` | `Compress Image`
 - **Client-Side AI Tools (Beta):**
-  - 🔍 **AI Document Extractor (OCR):** Ekstraksi teks dari gambar struk, nota, atau dokumen scan secara instan tanpa API key server (menggunakan `tesseract.js`).
-  - ✂️ **AI Background Remover:** Hapus latar belakang gambar secara instan menghasilkan berkas PNG transparan (menggunakan model WASM `@imgly/background-removal`).
+  - **AI Document Extractor (OCR):** Ekstraksi teks dari gambar struk, nota, atau dokumen scan secara instan tanpa API key server (menggunakan `tesseract.js`).
+  - **AI Background Remover:** Hapus latar belakang gambar secara instan menghasilkan berkas PNG transparan (menggunakan model WASM `@imgly/background-removal`).
 - **Responsive Mobile UX:** Dioptimalkan untuk perangkat mobile dengan Bottom Navigation Bar dan layout Responsive Card Stack untuk tabel riwayat berkas.
 - **Local Memory Vault:** Kelola riwayat konversi lokal secara detail melalui IndexedDB, lengkap dengan penghapusan memori yang aman dan visualisasi penggunaan storage.
 
 ---
 
-## 🛠️ Tech Stack & Processing Engines
+## Tech Stack & Processing Engines
 
 - **Framework & UI:** Next.js (App Router), TypeScript, Tailwind CSS, Shadcn UI, Lucide Icons.
 - **Client-Side PDF/Doc Engines:**
@@ -49,7 +49,7 @@
 
 ---
 
-## 📦 Instalasi & Panduan Pengembangan
+## Instalasi & Panduan Pengembangan
 
 ### Prasyarat
 Pastikan Anda sudah menginstal [Node.js](https://nodejs.org/) (versi 18.x atau yang lebih baru).
@@ -75,7 +75,3 @@ Pastikan Anda sudah menginstal [Node.js](https://nodejs.org/) (versi 18.x atau y
    Akses `http://localhost:3000` di browser Anda.
 
 ---
-
-## 📄 Lisensi & Kredit Portofolio
-
-Proyek ini dirilis di bawah lisensi MIT. Hak cipta dilindungi undang-undang oleh pengembang SwitchFile. Dibuat dengan dedikasi penuh terhadap standar web modern dan privasi pengguna.
