@@ -1,69 +1,133 @@
-import Image from "next/image";
+// ============================================================================
+// SwitchFile — Main Page
+// ============================================================================
+// Assembles all workspace components in the correct order.
+// ============================================================================
 
-export default function Home() {
+'use client';
+
+import { useCallback, useRef } from 'react';
+import { DashboardLayout } from '@/components/layout/dashboard-layout';
+import { CategoryTabs } from '@/components/workspace/category-tabs';
+import { FormatSwitcher } from '@/components/workspace/format-switcher';
+import { DropZone } from '@/components/workspace/drop-zone';
+import { FileQueue } from '@/components/workspace/file-queue';
+import { CompressionPanel } from '@/components/workspace/compression-panel';
+import { QuickTools } from '@/components/workspace/quick-tools';
+import { useFileConverter } from '@/hooks/use-file-converter';
+import type { FileFormat, CategoryFilter } from '@/types';
+
+// ============================================================================
+// Page Component
+// ============================================================================
+
+export default function HomePage() {
+  const {
+    files,
+    categoryFilter,
+    sourceFormat,
+    targetFormat,
+    isConverting,
+    addFiles,
+    removeFile,
+    clearFiles,
+    startConversion,
+    downloadFile,
+    downloadAll,
+    setCategoryFilter,
+    setSourceFormat,
+    setTargetFormat,
+  } = useFileConverter();
+
+  // Ref for smooth-scrolling to dropzone when a Quick Action card is clicked
+  const dropzoneRef = useRef<HTMLDivElement>(null);
+
+  // ── Category Tab Change Handler with Format Validation ──
+  const handleCategoryChange = useCallback(
+    (newCategory: CategoryFilter) => {
+      setCategoryFilter(newCategory);
+
+      if (sourceFormat) {
+        const docsFormats = ['pdf', 'docx', 'xlsx', 'txt', 'pptx'];
+        const imgsFormats = ['png', 'jpg', 'webp', 'heic'];
+
+        if (newCategory === 'documents' && !docsFormats.includes(sourceFormat)) {
+          setSourceFormat(null);
+          setTargetFormat(null);
+        } else if (newCategory === 'images' && !imgsFormats.includes(sourceFormat)) {
+          setSourceFormat(null);
+          setTargetFormat(null);
+        }
+      }
+    },
+    [sourceFormat, setCategoryFilter, setSourceFormat, setTargetFormat]
+  );
+
+  // ── Quick Tool Selection: set formats + smooth-scroll to dropzone ──
+  const handleToolSelect = useCallback(
+    (
+      source: FileFormat | null,
+      target: FileFormat | null,
+      category: CategoryFilter
+    ) => {
+      setCategoryFilter(category);
+      if (source) setSourceFormat(source);
+      if (target) setTargetFormat(target);
+
+      // Brief delay so React can re-render the dropzone before scrolling
+      setTimeout(() => {
+        dropzoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 80);
+    },
+    [setCategoryFilter, setSourceFormat, setTargetFormat]
+  );
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <DashboardLayout showRightPanel={false}>
+      {/* ── 1. Category Tabs ── */}
+      <CategoryTabs
+        activeTab={categoryFilter}
+        onTabChange={handleCategoryChange}
+      />
+
+      {/* ── 2. Quick Actions (always visible except on Compressor tab) ── */}
+      {categoryFilter !== 'compressor' && (
+        <QuickTools onToolSelect={handleToolSelect} />
+      )}
+
+      {/* ── 3. Convert Format Switcher ── */}
+      {categoryFilter !== 'compressor' && (
+        <FormatSwitcher
+          sourceFormat={sourceFormat}
+          targetFormat={targetFormat}
+          onSourceChange={setSourceFormat}
+          onTargetChange={setTargetFormat}
+          activeCategory={categoryFilter}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+      )}
+
+      {/* ── 4. Universal Dropzone (scroll anchor) ── */}
+      {categoryFilter !== 'compressor' && (
+        <div ref={dropzoneRef}>
+          <DropZone onFilesAdded={addFiles} disabled={isConverting} />
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      )}
+
+      {/* ── Compression Panel (Compressor tab only) ── */}
+      {categoryFilter === 'compressor' && <CompressionPanel />}
+
+      {/* ── 5. Active File Queue Manager ── */}
+      {files.length > 0 && (
+        <FileQueue
+          files={files}
+          isConverting={isConverting}
+          onStartConversion={startConversion}
+          onDownloadFile={downloadFile}
+          onDownloadAll={downloadAll}
+          onRemoveFile={removeFile}
+          onClearFiles={clearFiles}
+        />
+      )}
+    </DashboardLayout>
   );
 }
