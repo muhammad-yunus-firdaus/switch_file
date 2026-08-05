@@ -332,6 +332,17 @@ async function pptxToPdf(file: File): Promise<Blob> {
   const { PDFDocument } = await import('pdf-lib');
   const JSZip = (await import('jszip')).default;
 
+  interface Transform {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    chX?: number;
+    chY?: number;
+    chW?: number;
+    chH?: number;
+  }
+
   try {
     const arrayBuffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(arrayBuffer);
@@ -357,7 +368,7 @@ async function pptxToPdf(file: File): Promise<Blob> {
       if (presentationXml) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(presentationXml, 'application/xml');
-        const sldSz = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'sldSz')[0];
+        const sldSz = doc.getElementsByTagNameNS('*', 'sldSz')[0] || doc.getElementsByTagName('sldSz')[0];
         if (sldSz) {
           const cx = parseInt(sldSz.getAttribute('cx') || '', 10);
           const cy = parseInt(sldSz.getAttribute('cy') || '', 10);
@@ -368,7 +379,7 @@ async function pptxToPdf(file: File): Promise<Blob> {
         }
       }
     } catch {
-      // Widescreen default
+      // Default to 16:9 widescreen
     }
 
     const pdfDoc = await PDFDocument.create();
@@ -411,99 +422,262 @@ async function pptxToPdf(file: File): Promise<Blob> {
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, slideWidth, slideHeight);
 
-      const pics = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'pic');
-      for (let p = 0; p < pics.length; p++) {
-        const pic = pics[p];
-        const xfrm = pic.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'xfrm')[0];
-        if (!xfrm) continue;
-        const off = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'off')[0];
-        const ext = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'ext')[0];
-        if (!off || !ext) continue;
-
-        const cx = parseInt(off.getAttribute('x') || '0', 10);
-        const cy = parseInt(off.getAttribute('y') || '0', 10);
-        const wWidth = parseInt(ext.getAttribute('cx') || '0', 10);
-        const wHeight = parseInt(ext.getAttribute('cy') || '0', 10);
-
-        const x = Math.round(cx / 9525);
-        const y = Math.round(cy / 9525);
-        const w = Math.round(wWidth / 9525);
-        const h = Math.round(wHeight / 9525);
-
-        const blip = pic.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip')[0];
-        if (!blip) continue;
-        const embedId = blip.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed') || blip.getAttribute('r:embed');
-        if (!embedId) continue;
-
-        const targetPath = relsMap.get(embedId);
-        if (targetPath && zip.file(targetPath)) {
-          const imgBlob = await zip.file(targetPath)?.async('blob');
-          if (imgBlob) {
-            const url = URL.createObjectURL(imgBlob);
-            const img = new Image();
-            await new Promise((resolve) => {
-              img.onload = resolve;
-              img.onerror = resolve;
-              img.src = url;
-            });
-            ctx.drawImage(img, x, y, w, h);
-            URL.revokeObjectURL(url);
+      const findChildByLocalName = (parent: Element, name: string): Element | null => {
+        const children = parent.childNodes;
+        for (let idx = 0; idx < children.length; idx++) {
+          const child = children[idx];
+          if (child.nodeType === 1 && (child as Element).localName === name) {
+            return child as Element;
           }
         }
-      }
-
-      const shapes = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'sp');
-      for (let s = 0; s < shapes.length; s++) {
-        const shape = shapes[s];
-        const txBody = shape.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'txBody')[0] || shape.getElementsByTagName('p:txBody')[0];
-        if (!txBody) continue;
-
-        const xfrm = shape.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'xfrm')[0] || shape.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'xfrm')[0];
-        if (!xfrm) continue;
-        const off = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'off')[0];
-        const ext = xfrm.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'ext')[0];
-        if (!off || !ext) continue;
-
-        const cx = parseInt(off.getAttribute('x') || '0', 10);
-        const cy = parseInt(off.getAttribute('y') || '0', 10);
-        const wWidth = parseInt(ext.getAttribute('cx') || '0', 10);
-
-        const x = Math.round(cx / 9525);
-        const y = Math.round(cy / 9525);
-        const w = Math.round(wWidth / 9525);
-
-        const paragraphs = txBody.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'p');
-        let currentTextY = y + 16;
-
-        for (let p = 0; p < paragraphs.length; p++) {
-          const textNodes = paragraphs[p].getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 't');
-          let textStr = '';
-          for (let t = 0; t < textNodes.length; t++) {
-            textStr += textNodes[t].textContent || '';
+        const descendants = parent.getElementsByTagName('*');
+        for (let idx = 0; idx < descendants.length; idx++) {
+          if (descendants[idx].localName === name) {
+            return descendants[idx];
           }
+        }
+        return null;
+      };
 
-          if (textStr.trim()) {
-            ctx.fillStyle = '#1E293B';
-            ctx.font = '14px Arial, sans-serif';
+      const parseXfrm = (xfrmNode: Element, parentXfrm?: Transform): Transform => {
+        const off = findChildByLocalName(xfrmNode, 'off');
+        const ext = findChildByLocalName(xfrmNode, 'ext');
+        const chOff = findChildByLocalName(xfrmNode, 'chOff');
+        const extCh = findChildByLocalName(xfrmNode, 'chExt');
 
-            const words = textStr.split(' ');
-            let line = '';
-            let currentLineY = currentTextY;
+        const lcx = off ? parseInt(off.getAttribute('x') || '0', 10) : 0;
+        const lcy = off ? parseInt(off.getAttribute('y') || '0', 10) : 0;
+        const lcw = ext ? parseInt(ext.getAttribute('cx') || '0', 10) : 0;
+        const lch = ext ? parseInt(ext.getAttribute('cy') || '0', 10) : 0;
 
-            for (let n = 0; n < words.length; n++) {
-              const testLine = line + words[n] + ' ';
-              const metrics = ctx.measureText(testLine);
-              const testWidth = metrics.width;
-              if (testWidth > (w - 16) && n > 0) {
-                ctx.fillText(line, x + 8, currentLineY);
-                line = words[n] + ' ';
-                currentLineY += 18;
-              } else {
-                line = testLine;
+        let x = lcx / 9525;
+        let y = lcy / 9525;
+        let w = lcw / 9525;
+        let h = lch / 9525;
+
+        if (parentXfrm && parentXfrm.chW && parentXfrm.chH) {
+          const scaleX = parentXfrm.w / (parentXfrm.chW / 9525);
+          const scaleY = parentXfrm.h / (parentXfrm.chH / 9525);
+          const dx = x - (parentXfrm.chX || 0) / 9525;
+          const dy = y - (parentXfrm.chY || 0) / 9525;
+
+          x = parentXfrm.x + dx * scaleX;
+          y = parentXfrm.y + dy * scaleY;
+          w = w * scaleX;
+          h = h * scaleY;
+        }
+
+        const result: Transform = { x, y, w, h };
+
+        if (chOff && extCh) {
+          result.chX = parseInt(chOff.getAttribute('x') || '0', 10);
+          result.chY = parseInt(chOff.getAttribute('y') || '0', 10);
+          result.chW = parseInt(extCh.getAttribute('cx') || '1', 10);
+          result.chH = parseInt(extCh.getAttribute('cy') || '1', 10);
+        }
+
+        return result;
+      };
+
+      const renderElement = async (elem: Element, parentXfrm?: Transform) => {
+        const localName = elem.localName;
+
+        if (localName === 'grpSp') {
+          const grpSpPr = findChildByLocalName(elem, 'grpSpPr');
+          let currentXfrm = parentXfrm;
+          if (grpSpPr) {
+            const xfrm = findChildByLocalName(grpSpPr, 'xfrm');
+            if (xfrm) {
+              currentXfrm = parseXfrm(xfrm, parentXfrm);
+            }
+          }
+          const children = elem.childNodes;
+          for (let c = 0; c < children.length; c++) {
+            const child = children[c];
+            if (child.nodeType === 1) {
+              await renderElement(child as Element, currentXfrm);
+            }
+          }
+        } else if (localName === 'pic') {
+          const xfrm = findChildByLocalName(elem, 'xfrm');
+          if (!xfrm) return;
+          const t = parseXfrm(xfrm, parentXfrm);
+
+          const blip = findChildByLocalName(elem, 'blip');
+          if (!blip) return;
+
+          let embedId = '';
+          for (let attr = 0; attr < blip.attributes.length; attr++) {
+            if (blip.attributes[attr].name.endsWith('embed')) {
+              embedId = blip.attributes[attr].value;
+              break;
+            }
+          }
+          if (!embedId) return;
+
+          const targetPath = relsMap.get(embedId);
+          if (targetPath && zip.file(targetPath)) {
+            const imgBlob = await zip.file(targetPath)?.async('blob');
+            if (imgBlob) {
+              const url = URL.createObjectURL(imgBlob);
+              const img = new Image();
+              await new Promise((resolve) => {
+                img.onload = resolve;
+                img.onerror = resolve;
+                img.src = url;
+              });
+              ctx.drawImage(img, t.x, t.y, t.w, t.h);
+              URL.revokeObjectURL(url);
+            }
+          }
+        } else if (localName === 'sp') {
+          const xfrm = findChildByLocalName(elem, 'xfrm');
+          if (!xfrm) return;
+          const t = parseXfrm(xfrm, parentXfrm);
+
+          const spPr = findChildByLocalName(elem, 'spPr');
+          if (spPr) {
+            const solidFill = findChildByLocalName(spPr, 'solidFill');
+            if (solidFill) {
+              const srgbClr = findChildByLocalName(solidFill, 'srgbClr');
+              const sysClr = findChildByLocalName(solidFill, 'sysClr');
+              const val = srgbClr?.getAttribute('val') || sysClr?.getAttribute('lastClr');
+              if (val && /^[0-9A-Fa-f]{6}$/.test(val)) {
+                ctx.fillStyle = `#${val}`;
+                ctx.fillRect(t.x, t.y, t.w, t.h);
               }
             }
-            ctx.fillText(line, x + 8, currentLineY);
-            currentTextY = currentLineY + 24;
+
+            const ln = findChildByLocalName(spPr, 'ln');
+            if (ln) {
+              const solidFillLn = findChildByLocalName(ln, 'solidFill');
+              const srgbClrLn = solidFillLn ? findChildByLocalName(solidFillLn, 'srgbClr') : null;
+              const valLn = srgbClrLn?.getAttribute('val');
+              if (valLn && /^[0-9A-Fa-f]{6}$/.test(valLn)) {
+                ctx.strokeStyle = `#${valLn}`;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(t.x, t.y, t.w, t.h);
+              }
+            }
+          }
+
+          const txBody = findChildByLocalName(elem, 'txBody');
+          if (!txBody) return;
+
+          const allChildren = txBody.getElementsByTagName('*');
+          const paragraphs: Element[] = [];
+          for (let c = 0; c < allChildren.length; c++) {
+            if (allChildren[c].localName === 'p') {
+              paragraphs.push(allChildren[c]);
+            }
+          }
+
+          let currentTextY = t.y + 18;
+
+          for (let p = 0; p < paragraphs.length; p++) {
+            const para = paragraphs[p];
+            let align = 'left';
+            const pPr = findChildByLocalName(para, 'pPr');
+            if (pPr) {
+              const algnAttr = pPr.getAttribute('algn');
+              if (algnAttr === 'ctr') align = 'center';
+              else if (algnAttr === 'r') align = 'right';
+            }
+
+            let runFontSize = 14;
+            let runColor = '#1E293B';
+            let runBold = false;
+
+            const firstRPr = para.getElementsByTagName('*');
+            for (let idx = 0; idx < firstRPr.length; idx++) {
+              if (firstRPr[idx].localName === 'rPr') {
+                const rPr = firstRPr[idx];
+                const sz = rPr.getAttribute('sz');
+                if (sz) {
+                  runFontSize = Math.round(parseInt(sz, 10) / 100);
+                }
+                const b = rPr.getAttribute('b');
+                if (b === '1' || b === 'true') {
+                  runBold = true;
+                }
+                const solidFill = findChildByLocalName(rPr, 'solidFill');
+                if (solidFill) {
+                  const srgbClr = findChildByLocalName(solidFill, 'srgbClr');
+                  const val = srgbClr?.getAttribute('val');
+                  if (val && /^[0-9A-Fa-f]{6}$/.test(val)) {
+                    runColor = `#${val}`;
+                  }
+                }
+                break;
+              }
+            }
+
+            let paragraphText = '';
+            const runs = para.childNodes;
+            for (let r = 0; r < runs.length; r++) {
+              const run = runs[r];
+              if (run.nodeType === 1) {
+                const el = run as Element;
+                if (el.localName === 'r' || el.localName === 'fld') {
+                  const tNodes = el.getElementsByTagName('*');
+                  for (let tIdx = 0; tIdx < tNodes.length; tIdx++) {
+                    if (tNodes[tIdx].localName === 't') {
+                      paragraphText += tNodes[tIdx].textContent || '';
+                    }
+                  }
+                } else if (el.localName === 'br') {
+                  paragraphText += '\n';
+                }
+              }
+            }
+
+            if (paragraphText.trim()) {
+              ctx.fillStyle = runColor;
+              ctx.font = `${runBold ? 'bold ' : ''}${runFontSize}px Arial, sans-serif`;
+              ctx.textAlign = align as CanvasTextAlign;
+
+              const drawX = align === 'center' ? t.x + t.w / 2 : align === 'right' ? t.x + t.w - 8 : t.x + 8;
+
+              const lines = paragraphText.split('\n');
+              for (const lineText of lines) {
+                const words = lineText.split(' ');
+                let line = '';
+                let currentLineY = currentTextY;
+
+                for (let n = 0; n < words.length; n++) {
+                  const testLine = line + words[n] + ' ';
+                  const metrics = ctx.measureText(testLine);
+                  const testWidth = metrics.width;
+                  if (testWidth > (t.w - 16) && n > 0) {
+                    ctx.fillText(line, drawX, currentLineY);
+                    line = words[n] + ' ';
+                    currentLineY += runFontSize + 4;
+                  } else {
+                    line = testLine;
+                  }
+                }
+                ctx.fillText(line, drawX, currentLineY);
+                currentTextY = currentLineY + runFontSize + 8;
+              }
+              ctx.textAlign = 'left';
+            }
+          }
+        }
+      };
+
+      const sld = doc.getElementsByTagNameNS('*', 'sld')[0] || doc.getElementsByTagName('sld')[0];
+      if (sld) {
+        const cSld = findChildByLocalName(sld, 'cSld');
+        if (cSld) {
+          const spTree = findChildByLocalName(cSld, 'spTree');
+          if (spTree) {
+            const children = spTree.childNodes;
+            for (let c = 0; c < children.length; c++) {
+              const child = children[c];
+              if (child.nodeType === 1) {
+                await renderElement(child as Element);
+              }
+            }
           }
         }
       }
