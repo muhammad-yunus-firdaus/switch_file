@@ -347,6 +347,17 @@ async function pptxToPdf(file: File): Promise<Blob> {
     const arrayBuffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(arrayBuffer);
 
+    const findZipFile = (path: string) => {
+      const clean = path.replace(/^\//, '').toLowerCase();
+      const keys = Object.keys(zip.files);
+      for (let idx = 0; idx < keys.length; idx++) {
+        if (keys[idx].toLowerCase() === clean) {
+          return zip.files[keys[idx]];
+        }
+      }
+      return zip.file(path);
+    };
+
     const slideFiles = Object.keys(zip.files).filter(name =>
       /^ppt\/slides\/slide\d+\.xml$/.test(name)
     );
@@ -364,7 +375,8 @@ async function pptxToPdf(file: File): Promise<Blob> {
     let slideWidth = 960;
     let slideHeight = 540;
     try {
-      const presentationXml = await zip.file('ppt/presentation.xml')?.async('text');
+      const presentationXmlFile = findZipFile('ppt/presentation.xml');
+      const presentationXml = presentationXmlFile ? await presentationXmlFile.async('text') : null;
       if (presentationXml) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(presentationXml, 'application/xml');
@@ -396,7 +408,8 @@ async function pptxToPdf(file: File): Promise<Blob> {
       try {
         const slideName = slideFile.split('/').pop();
         const relsFile = `ppt/slides/_rels/${slideName}.rels`;
-        const relsXml = await zip.file(relsFile)?.async('text');
+        const relsFileObj = findZipFile(relsFile);
+        const relsXml = relsFileObj ? await relsFileObj.async('text') : null;
         if (relsXml) {
           const relsDoc = parser.parseFromString(relsXml, 'application/xml');
           const relationships = relsDoc.getElementsByTagName('Relationship');
@@ -479,17 +492,6 @@ async function pptxToPdf(file: File): Promise<Blob> {
         return result;
       };
 
-      const findZipFile = (path: string) => {
-        const clean = path.replace(/^\//, '').toLowerCase();
-        const keys = Object.keys(zip.files);
-        for (let idx = 0; idx < keys.length; idx++) {
-          if (keys[idx].toLowerCase() === clean) {
-            return zip.files[keys[idx]];
-          }
-        }
-        return zip.file(path);
-      };
-
       const renderElement = async (elem: Element, parentXfrm?: Transform) => {
         const localName = elem.localName;
 
@@ -548,6 +550,34 @@ async function pptxToPdf(file: File): Promise<Blob> {
           const xfrm = findChildByLocalName(elem, 'xfrm');
           if (!xfrm) return;
           const t = parseXfrm(xfrm, parentXfrm);
+
+          if (!parentXfrm) {
+            const spPr = findChildByLocalName(elem, 'spPr');
+            if (spPr) {
+              const solidFill = findChildByLocalName(spPr, 'solidFill');
+              if (solidFill) {
+                const srgbClr = findChildByLocalName(solidFill, 'srgbClr');
+                const sysClr = findChildByLocalName(solidFill, 'sysClr');
+                const val = srgbClr?.getAttribute('val') || sysClr?.getAttribute('lastClr');
+                if (val && /^[0-9A-Fa-f]{6}$/.test(val) && val.toLowerCase() !== '000000') {
+                  ctx.fillStyle = `#${val}`;
+                  ctx.fillRect(t.x, t.y, t.w, t.h);
+                }
+              }
+
+              const ln = findChildByLocalName(spPr, 'ln');
+              if (ln) {
+                const solidFillLn = findChildByLocalName(ln, 'solidFill');
+                const srgbClrLn = solidFillLn ? findChildByLocalName(solidFillLn, 'srgbClr') : null;
+                const valLn = srgbClrLn?.getAttribute('val');
+                if (valLn && /^[0-9A-Fa-f]{6}$/.test(valLn)) {
+                  ctx.strokeStyle = `#${valLn}`;
+                  ctx.lineWidth = 1;
+                  ctx.strokeRect(t.x, t.y, t.w, t.h);
+                }
+              }
+            }
+          }
 
           const txBody = findChildByLocalName(elem, 'txBody');
           if (!txBody) return;
