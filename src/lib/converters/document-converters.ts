@@ -479,6 +479,17 @@ async function pptxToPdf(file: File): Promise<Blob> {
         return result;
       };
 
+      const findZipFile = (path: string) => {
+        const clean = path.replace(/^\//, '').toLowerCase();
+        const keys = Object.keys(zip.files);
+        for (let idx = 0; idx < keys.length; idx++) {
+          if (keys[idx].toLowerCase() === clean) {
+            return zip.files[keys[idx]];
+          }
+        }
+        return zip.file(path);
+      };
+
       const renderElement = async (elem: Element, parentXfrm?: Transform) => {
         const localName = elem.localName;
 
@@ -516,50 +527,27 @@ async function pptxToPdf(file: File): Promise<Blob> {
           if (!embedId) return;
 
           const targetPath = relsMap.get(embedId);
-          if (targetPath && zip.file(targetPath)) {
-            const imgBlob = await zip.file(targetPath)?.async('blob');
-            if (imgBlob) {
-              const url = URL.createObjectURL(imgBlob);
-              const img = new Image();
-              await new Promise((resolve) => {
-                img.onload = resolve;
-                img.onerror = resolve;
-                img.src = url;
-              });
-              ctx.drawImage(img, t.x, t.y, t.w, t.h);
-              URL.revokeObjectURL(url);
+          if (targetPath) {
+            const fileObj = findZipFile(targetPath);
+            if (fileObj) {
+              const imgBlob = await fileObj.async('blob');
+              if (imgBlob) {
+                const url = URL.createObjectURL(imgBlob);
+                const img = new Image();
+                await new Promise((resolve) => {
+                  img.onload = resolve;
+                  img.onerror = resolve;
+                  img.src = url;
+                });
+                ctx.drawImage(img, t.x, t.y, t.w, t.h);
+                URL.revokeObjectURL(url);
+              }
             }
           }
         } else if (localName === 'sp') {
           const xfrm = findChildByLocalName(elem, 'xfrm');
           if (!xfrm) return;
           const t = parseXfrm(xfrm, parentXfrm);
-
-          const spPr = findChildByLocalName(elem, 'spPr');
-          if (spPr) {
-            const solidFill = findChildByLocalName(spPr, 'solidFill');
-            if (solidFill) {
-              const srgbClr = findChildByLocalName(solidFill, 'srgbClr');
-              const sysClr = findChildByLocalName(solidFill, 'sysClr');
-              const val = srgbClr?.getAttribute('val') || sysClr?.getAttribute('lastClr');
-              if (val && /^[0-9A-Fa-f]{6}$/.test(val)) {
-                ctx.fillStyle = `#${val}`;
-                ctx.fillRect(t.x, t.y, t.w, t.h);
-              }
-            }
-
-            const ln = findChildByLocalName(spPr, 'ln');
-            if (ln) {
-              const solidFillLn = findChildByLocalName(ln, 'solidFill');
-              const srgbClrLn = solidFillLn ? findChildByLocalName(solidFillLn, 'srgbClr') : null;
-              const valLn = srgbClrLn?.getAttribute('val');
-              if (valLn && /^[0-9A-Fa-f]{6}$/.test(valLn)) {
-                ctx.strokeStyle = `#${valLn}`;
-                ctx.lineWidth = 1;
-                ctx.strokeRect(t.x, t.y, t.w, t.h);
-              }
-            }
-          }
 
           const txBody = findChildByLocalName(elem, 'txBody');
           if (!txBody) return;
