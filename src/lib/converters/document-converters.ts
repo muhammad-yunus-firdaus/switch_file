@@ -1,32 +1,80 @@
-// ============================================================================
-// SwitchFile — Document Converters
-// ============================================================================
-// Handles document format conversions (XLSX → PDF, DOCX → PDF).
-// Uses SheetJS for spreadsheet parsing and pdf-lib for PDF generation.
-// ============================================================================
-
+import type { PDFPage, PDFFont, RGB } from 'pdf-lib';
 import { registerConverter } from './registry';
 
 // ============================================================================
-// XLSX → PDF (via SheetJS + pdf-lib)
+// Fontkit Integration & Global Font Caching
 // ============================================================================
 
-/**
- * Convert an Excel spreadsheet to PDF.
- * Parses the spreadsheet with SheetJS, renders the data as a table in a PDF.
- */
+let cachedFontRegular: ArrayBuffer | null = null;
+let cachedFontBold: ArrayBuffer | null = null;
+
+async function getCustomFontRegular(): Promise<ArrayBuffer> {
+  if (cachedFontRegular) return cachedFontRegular;
+  const res = await fetch('https://cdn.jsdelivr.net/gh/google/fonts@master/apache/roboto/static/Roboto-Regular.ttf');
+  if (!res.ok) throw new Error('Failed to fetch Roboto-Regular font');
+  cachedFontRegular = await res.arrayBuffer();
+  return cachedFontRegular;
+}
+
+async function getCustomFontBold(): Promise<ArrayBuffer> {
+  if (cachedFontBold) return cachedFontBold;
+  const res = await fetch('https://cdn.jsdelivr.net/gh/google/fonts@master/apache/roboto/static/Roboto-Bold.ttf');
+  if (!res.ok) throw new Error('Failed to fetch Roboto-Bold font');
+  cachedFontBold = await res.arrayBuffer();
+  return cachedFontBold;
+}
+
+function sanitizeWinAnsiText(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/→/g, '->')
+    .replace(/←/g, '<-')
+    .replace(/–|—/g, '-')
+    .replace(/•/g, '*')
+    .replace(/[^\x00-\xFF]/g, ''); // Remove non-WinAnsi characters
+}
+
+interface DrawTextOptions {
+  x: number;
+  y: number;
+  size: number;
+  font: PDFFont;
+  color: RGB;
+  isCustomFont: boolean;
+}
+
+function drawTextSafely(page: PDFPage, text: string, options: DrawTextOptions) {
+  const { x, y, size, font, color, isCustomFont } = options;
+  const processedText = isCustomFont ? text : sanitizeWinAnsiText(text);
+
+  try {
+    page.drawText(processedText, { x, y, size, font, color });
+  } catch (err) {
+    console.warn('drawText failed, trying ASCII-only failsafe:', err);
+    try {
+      const asciiText = text.replace(/[^\x20-\x7E]/g, '');
+      page.drawText(asciiText, { x, y, size, font, color });
+    } catch {
+      // ignore silently if it still fails
+    }
+  }
+}
+
+// ============================================================================
+// XLSX → PDF
+// ============================================================================
+
 async function xlsxToPdf(file: File): Promise<Blob> {
   const XLSX = await import('xlsx');
   const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
+  const fontkit = (await import('@pdf-lib/fontkit')).default;
 
   const arrayBuffer = await file.arrayBuffer();
   const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
-  // Use the first sheet
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
 
-  // Convert sheet to array of arrays
   const data: string[][] = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
     defval: '',
@@ -36,13 +84,27 @@ async function xlsxToPdf(file: File): Promise<Blob> {
     throw new Error('Spreadsheet is empty — nothing to convert');
   }
 
-  // Create PDF
   const pdfDoc = await PDFDocument.create();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  pdfDoc.registerFontkit(fontkit);
 
-  const PAGE_WIDTH = 842; // A4 Landscape width
-  const PAGE_HEIGHT = 595; // A4 Landscape height
+  let font;
+  let boldFont;
+  let isCustomFont = false;
+
+  try {
+    const regBytes = await getCustomFontRegular();
+    const boldBytes = await getCustomFontBold();
+    font = await pdfDoc.embedFont(regBytes);
+    boldFont = await pdfDoc.embedFont(boldBytes);
+    isCustomFont = true;
+  } catch (e) {
+    console.warn('Failed to embed Roboto, falling back to Helvetica:', e);
+    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  }
+
+  const PAGE_WIDTH = 842;
+  const PAGE_HEIGHT = 595;
   const MARGIN = 40;
   const FONT_SIZE = 8;
   const ROW_HEIGHT = 16;
@@ -60,20 +122,19 @@ async function xlsxToPdf(file: File): Promise<Blob> {
     const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     let y = PAGE_HEIGHT - MARGIN;
 
-    // Draw header row (first row of data on first page, or continued)
     if (currentRow === 0 && data.length > 0) {
       const headerRow = data[0];
       for (let col = 0; col < headerRow.length; col++) {
         const cellText = String(headerRow[col] ?? '').substring(0, 30);
-        page.drawText(cellText, {
+        drawTextSafely(page, cellText, {
           x: MARGIN + col * colWidth + 4,
           y: y - 12,
           size: FONT_SIZE + 1,
           font: boldFont,
           color: rgb(0.12, 0.16, 0.23),
+          isCustomFont,
         });
       }
-      // Draw header underline
       page.drawLine({
         start: { x: MARGIN, y: y - HEADER_HEIGHT },
         end: { x: PAGE_WIDTH - MARGIN, y: y - HEADER_HEIGHT },
@@ -84,12 +145,10 @@ async function xlsxToPdf(file: File): Promise<Blob> {
       currentRow = 1;
     }
 
-    // Draw data rows
     const endRow = Math.min(currentRow + rowsPerPage, data.length);
     for (let row = currentRow; row < endRow; row++) {
       const rowData = data[row];
 
-      // Alternate row background
       if (row % 2 === 0) {
         page.drawRectangle({
           x: MARGIN,
@@ -102,12 +161,13 @@ async function xlsxToPdf(file: File): Promise<Blob> {
 
       for (let col = 0; col < (rowData?.length ?? 0); col++) {
         const cellText = String(rowData[col] ?? '').substring(0, 30);
-        page.drawText(cellText, {
+        drawTextSafely(page, cellText, {
           x: MARGIN + col * colWidth + 4,
           y: y - 12,
           size: FONT_SIZE,
-          font: font,
+          font,
           color: rgb(0.12, 0.16, 0.23),
+          isCustomFont,
         });
       }
       y -= ROW_HEIGHT;
@@ -121,19 +181,14 @@ async function xlsxToPdf(file: File): Promise<Blob> {
 }
 
 // ============================================================================
-// DOCX → PDF (Basic text extraction + PDF rendering)
+// DOCX → PDF
 // ============================================================================
 
-/**
- * Convert a DOCX file to PDF.
- * Extracts raw text content and renders it as a simple PDF.
- * Note: This is a basic implementation — complex formatting is not preserved.
- */
 async function docxToPdf(file: File): Promise<Blob> {
   const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
-
-  // Extract text from DOCX (ZIP → document.xml → text content)
   const JSZip = (await import('jszip')).default;
+  const fontkit = (await import('@pdf-lib/fontkit')).default;
+
   const arrayBuffer = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(arrayBuffer);
 
@@ -143,8 +198,6 @@ async function docxToPdf(file: File): Promise<Blob> {
   }
 
   const xmlContent = await docXml.async('text');
-
-  // Parse XML and extract text from <w:t> tags
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlContent, 'application/xml');
   const textNodes = doc.getElementsByTagNameNS(
@@ -152,7 +205,6 @@ async function docxToPdf(file: File): Promise<Blob> {
     't'
   );
 
-  // Build paragraphs from <w:p> elements
   const paragraphs: string[] = [];
   const pElements = doc.getElementsByTagNameNS(
     'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
@@ -171,7 +223,6 @@ async function docxToPdf(file: File): Promise<Blob> {
     paragraphs.push(paragraphText);
   }
 
-  // If no paragraphs found, try fallback with all <w:t> nodes
   if (paragraphs.length === 0 || paragraphs.every((p) => p.trim() === '')) {
     let allText = '';
     for (let i = 0; i < textNodes.length; i++) {
@@ -181,11 +232,22 @@ async function docxToPdf(file: File): Promise<Blob> {
     paragraphs.push(allText.trim());
   }
 
-  // Create PDF
   const pdfDoc = await PDFDocument.create();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  pdfDoc.registerFontkit(fontkit);
 
-  const PAGE_WIDTH = 595; // A4 Portrait
+  let font;
+  let isCustomFont = false;
+
+  try {
+    const regBytes = await getCustomFontRegular();
+    font = await pdfDoc.embedFont(regBytes);
+    isCustomFont = true;
+  } catch (e) {
+    console.warn('Failed to embed Roboto, falling back to Helvetica:', e);
+    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  }
+
+  const PAGE_WIDTH = 595;
   const PAGE_HEIGHT = 842;
   const MARGIN = 50;
   const FONT_SIZE = 11;
@@ -197,7 +259,7 @@ async function docxToPdf(file: File): Promise<Blob> {
 
   for (const paragraph of paragraphs) {
     if (paragraph.trim() === '') {
-      y -= LINE_HEIGHT; // Empty paragraph = line break
+      y -= LINE_HEIGHT;
       if (y < MARGIN) {
         page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
         y = PAGE_HEIGHT - MARGIN;
@@ -205,22 +267,32 @@ async function docxToPdf(file: File): Promise<Blob> {
       continue;
     }
 
-    // Word wrap the paragraph
     const words = paragraph.split(' ');
     let currentLine = '';
 
     for (const word of words) {
       const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const textWidth = font.widthOfTextAtSize(testLine, FONT_SIZE);
+      let textWidth = 0;
+      const wrapText = isCustomFont ? testLine : sanitizeWinAnsiText(testLine);
+      
+      try {
+        textWidth = font.widthOfTextAtSize(wrapText, FONT_SIZE);
+      } catch {
+        try {
+          textWidth = font.widthOfTextAtSize(testLine.replace(/[^\x20-\x7E]/g, ''), FONT_SIZE);
+        } catch {
+          textWidth = 0;
+        }
+      }
 
       if (textWidth > MAX_WIDTH && currentLine) {
-        // Draw current line
-        page.drawText(currentLine, {
+        drawTextSafely(page, currentLine, {
           x: MARGIN,
           y,
           size: FONT_SIZE,
           font,
           color: rgb(0.12, 0.16, 0.23),
+          isCustomFont,
         });
         y -= LINE_HEIGHT;
 
@@ -234,16 +306,16 @@ async function docxToPdf(file: File): Promise<Blob> {
       }
     }
 
-    // Draw remaining text
     if (currentLine) {
-      page.drawText(currentLine, {
+      drawTextSafely(page, currentLine, {
         x: MARGIN,
         y,
         size: FONT_SIZE,
         font,
         color: rgb(0.12, 0.16, 0.23),
+        isCustomFont,
       });
-      y -= LINE_HEIGHT * 1.5; // Extra spacing between paragraphs
+      y -= LINE_HEIGHT * 1.5;
 
       if (y < MARGIN) {
         page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
@@ -256,18 +328,18 @@ async function docxToPdf(file: File): Promise<Blob> {
   return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
 }
 
-/**
- * Convert a PPTX presentation to PDF.
- * Extracts text from XML slides (ppt/slides/slide*.xml) and renders them in a PDF document.
- */
+// ============================================================================
+// PPTX → PDF
+// ============================================================================
+
 async function pptxToPdf(file: File): Promise<Blob> {
   const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
   const JSZip = (await import('jszip')).default;
+  const fontkit = (await import('@pdf-lib/fontkit')).default;
 
   const arrayBuffer = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(arrayBuffer);
 
-  // Find all slide XML files
   const slideFiles = Object.keys(zip.files).filter(name =>
     /^ppt\/slides\/slide\d+\.xml$/.test(name)
   );
@@ -276,7 +348,6 @@ async function pptxToPdf(file: File): Promise<Blob> {
     throw new Error('Invalid PPTX file — no slides found');
   }
 
-  // Sort slides numerically
   slideFiles.sort((a, b) => {
     const numA = parseInt(a.replace(/\D/g, ''), 10);
     const numB = parseInt(b.replace(/\D/g, ''), 10);
@@ -284,10 +355,25 @@ async function pptxToPdf(file: File): Promise<Blob> {
   });
 
   const pdfDoc = await PDFDocument.create();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  pdfDoc.registerFontkit(fontkit);
 
-  const PAGE_WIDTH = 842; // Landscape format
+  let font;
+  let boldFont;
+  let isCustomFont = false;
+
+  try {
+    const regBytes = await getCustomFontRegular();
+    const boldBytes = await getCustomFontBold();
+    font = await pdfDoc.embedFont(regBytes);
+    boldFont = await pdfDoc.embedFont(boldBytes);
+    isCustomFont = true;
+  } catch (e) {
+    console.warn('Failed to embed Roboto, falling back to Helvetica:', e);
+    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  }
+
+  const PAGE_WIDTH = 842;
   const PAGE_HEIGHT = 595;
   const MARGIN = 50;
 
@@ -298,7 +384,6 @@ async function pptxToPdf(file: File): Promise<Blob> {
     const parser = new DOMParser();
     const doc = parser.parseFromString(slideXml, 'application/xml');
     
-    // Extract text from <a:t> elements inside slide
     const textNodes = doc.getElementsByTagNameNS(
       'http://schemas.openxmlformats.org/drawingml/2006/main',
       't'
@@ -314,28 +399,28 @@ async function pptxToPdf(file: File): Promise<Blob> {
 
     const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     
-    // Draw Slide Title/Header
-    page.drawText(`Slide ${i + 1}`, {
+    drawTextSafely(page, `Slide ${i + 1}`, {
       x: MARGIN,
       y: PAGE_HEIGHT - MARGIN,
       size: 16,
       font: boldFont,
       color: rgb(0.15, 0.25, 0.45),
+      isCustomFont,
     });
 
     let y = PAGE_HEIGHT - MARGIN - 40;
     
-    // Draw text elements
     for (const paragraph of slideTexts) {
       if (y < MARGIN) break;
       const isHeader = paragraph.length < 40 && y === (PAGE_HEIGHT - MARGIN - 40);
 
-      page.drawText(paragraph.substring(0, 100), {
+      drawTextSafely(page, paragraph.substring(0, 100), {
         x: MARGIN,
         y,
         size: isHeader ? 13 : 11,
         font: isHeader ? boldFont : font,
         color: rgb(0.12, 0.16, 0.23),
+        isCustomFont,
       });
 
       y -= 22;
@@ -346,10 +431,10 @@ async function pptxToPdf(file: File): Promise<Blob> {
   return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
 }
 
-/**
- * Convert a PDF file to a PPTX presentation.
- * Extracts text from PDF pages and imports them into slides using pptxgenjs.
- */
+// ============================================================================
+// PDF → PPTX
+// ============================================================================
+
 async function pdfToPptx(file: File): Promise<Blob> {
   const pdfjs = await import('pdfjs-dist');
   const PptxGenJS = (await import('pptxgenjs')).default;
