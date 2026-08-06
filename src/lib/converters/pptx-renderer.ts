@@ -1,31 +1,31 @@
-/**
- * pptx-renderer.ts  — v2
+﻿/**
+ * pptx-renderer.ts  â€” v2
  *
- * Parsing OOXML (.pptx) slide → HTMLCanvasElement, siap di-embed ke pdf-lib.
+ * Parsing OOXML (.pptx) slide â†’ HTMLCanvasElement, siap di-embed ke pdf-lib.
  *
  * Perbaikan v2:
- *  1. Text collision fix — setiap paragraf & baris punya curY independen
+ *  1. Text collision fix â€” setiap paragraf & baris punya curY independen
  *     yang naik dengan benar sesuai lineSpacing/lnSpc OOXML.
- *  2. Black-box fix — shape tanpa fill eksplisit default ke transparent,
+ *  2. Black-box fix â€” shape tanpa fill eksplisit default ke transparent,
  *     bukan hitam. Pengecekan noFill dilakukan sebelum apply fill.
- *  3. grpSp recursive fix — koordinat children di-transform relatif
+ *  3. grpSp recursive fix â€” koordinat children di-transform relatif
  *     terhadap parent group menggunakan chOff/chExt secara benar.
  */
 
-// ─── Public API Types ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Public API Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface SlideSize {
   widthPx: number;
   heightPx: number;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** EMU per pixel at 96 DPI */
 const EMU_PER_PX = 9525;
 const FALLBACK_FONT = 'Arial, "Helvetica Neue", Helvetica, sans-serif';
 
-// ─── XML Helpers ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ XML Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Direct child by localName only (namespace-agnostic). */
 function ch(parent: Element, name: string): Element | null {
@@ -55,7 +55,7 @@ function ai(el: Element | null, attr: string, fallback = 0): number {
   return isNaN(n) ? fallback : n;
 }
 
-/** EMU → pixel */
+/** EMU â†’ pixel */
 const px = (emu: number) => emu / EMU_PER_PX;
 
 /** Extract embedId from a:blip attributes (r:embed or any *:embed) */
@@ -66,7 +66,7 @@ function getEmbedId(blipEl: Element): string {
   return '';
 }
 
-// ─── Transform ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Transform â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface Xfrm {
   x: number; y: number; w: number; h: number;
@@ -88,8 +88,8 @@ const ZERO_XFRM: Xfrm = { x: 0, y: 0, w: 0, h: 0, rot: 0, flipH: false, flipV: f
  *   rendered pixel rectangle.
  *
  *   Edge cases handled:
- *   - chW/chH = 0  → treat as 1:1 pixel mapping (no scaling)
- *   - Nested groups → parent already carries the scaled pixel rect,
+ *   - chW/chH = 0  â†’ treat as 1:1 pixel mapping (no scaling)
+ *   - Nested groups â†’ parent already carries the scaled pixel rect,
  *     so we recurse naturally.
  */
 function parseXfrm(xfrmEl: Element, parent?: Xfrm): Xfrm {
@@ -106,7 +106,7 @@ function parseXfrm(xfrmEl: Element, parent?: Xfrm): Xfrm {
   let x: number, y: number, w: number, h: number;
 
   if (parent && parent.chW > 0 && parent.chH > 0) {
-    // Map from group child-space (EMU) → parent pixel rect
+    // Map from group child-space (EMU) â†’ parent pixel rect
     const scaleX = parent.w / px(parent.chW);
     const scaleY = parent.h / px(parent.chH);
     const originX = px(parent.chX);
@@ -117,13 +117,13 @@ function parseXfrm(xfrmEl: Element, parent?: Xfrm): Xfrm {
     h = px(rawH) * scaleY;
   } else if (parent && parent.chW === 0 && parent.chH === 0 && (parent.w > 0 || parent.h > 0)) {
     // grpSp declared without chExt (malformed but common in older PPTX).
-    // Treat child coords as absolute EMU — still convert to px normally.
+    // Treat child coords as absolute EMU â€” still convert to px normally.
     x = px(rawX);
     y = px(rawY);
     w = px(rawW);
     h = px(rawH);
   } else {
-    // Top-level: straight EMU → px
+    // Top-level: straight EMU â†’ px
     x = px(rawX);
     y = px(rawY);
     w = px(rawW);
@@ -144,7 +144,7 @@ function parseXfrm(xfrmEl: Element, parent?: Xfrm): Xfrm {
   };
 }
 
-// ─── Color Parser ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Color Parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SCHEME_COLORS: Record<string, string> = {
   dk1: '000000', lt1: 'FFFFFF', dk2: '1F3864', lt2: 'E7E6E6',
@@ -156,7 +156,7 @@ const SCHEME_COLORS: Record<string, string> = {
 };
 
 /**
- * Convert a solidFill element (containing srgbClr/sysClr/schemeClr) → CSS rgba().
+ * Convert a solidFill element (containing srgbClr/sysClr/schemeClr) â†’ CSS rgba().
  *
  * Bug-2 fix: alpha value is read from a:alpha child of the color node.
  * lumMod/lumOff modifiers are applied to keep colour accurate.
@@ -181,11 +181,11 @@ function colorFromFill(fillEl: Element): string {
   let alpha = 1.0;
 
   if (colorNode) {
-    // a:alpha — stored as 0–100000, meaning 0% to 100% opacity
+    // a:alpha â€” stored as 0â€“100000, meaning 0% to 100% opacity
     const alphaEl = ch(colorNode, 'alpha');
     if (alphaEl) alpha = ai(alphaEl, 'val', 100000) / 100000;
 
-    // a:lumMod — multiply luminance
+    // a:lumMod â€” multiply luminance
     const lumMod = ch(colorNode, 'lumMod');
     if (lumMod) {
       const m = ai(lumMod, 'val', 100000) / 100000;
@@ -194,7 +194,7 @@ function colorFromFill(fillEl: Element): string {
       b = Math.min(255, Math.round(b * m));
     }
 
-    // a:lumOff — add offset to luminance
+    // a:lumOff â€” add offset to luminance
     const lumOff = ch(colorNode, 'lumOff');
     if (lumOff) {
       const o = Math.round(ai(lumOff, 'val', 0) / 100000 * 255);
@@ -203,7 +203,7 @@ function colorFromFill(fillEl: Element): string {
       b = Math.min(255, Math.max(0, b + o));
     }
 
-    // a:shade — multiply by factor (darkness)
+    // a:shade â€” multiply by factor (darkness)
     const shade = ch(colorNode, 'shade');
     if (shade) {
       const s = ai(shade, 'val', 100000) / 100000;
@@ -212,7 +212,7 @@ function colorFromFill(fillEl: Element): string {
       b = Math.min(255, Math.round(b * s));
     }
 
-    // a:tint — interpolate towards white
+    // a:tint â€” interpolate towards white
     const tint = ch(colorNode, 'tint');
     if (tint) {
       const t = ai(tint, 'val', 100000) / 100000;
@@ -225,14 +225,14 @@ function colorFromFill(fillEl: Element): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/** Perceived brightness 0–255 */
+/** Perceived brightness 0â€“255 */
 function luminance(css: string): number {
   const m = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
   if (!m) return 128;
   return (parseInt(m[1]) * 299 + parseInt(m[2]) * 587 + parseInt(m[3]) * 114) / 1000;
 }
 
-// ─── Shape Fill Resolver ──────────────────────────────────────────────────────
+// â”€â”€â”€ Shape Fill Resolver â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface FillResult {
   color: string;   // CSS color string, 'none' = no fill
@@ -243,13 +243,13 @@ interface FillResult {
  * Resolve fill from a spPr / tcPr element.
  *
  * Priority order (matches OOXML spec):
- *   1. <a:noFill>        → transparent, stop
- *   2. <a:blipFill>      → image fill — caller handles image; report isNone here
+ *   1. <a:noFill>        â†’ transparent, stop
+ *   2. <a:blipFill>      â†’ image fill â€” caller handles image; report isNone here
  *      so shape background isn't painted black underneath the image.
- *   3. <a:solidFill>     → solid colour (respects a:alpha)
- *   4. <a:gradFill>      → use first gradient stop as approximation
- *   5. <a:pattFill>      → use fgClr as approximation
- *   6. nothing found     → transparent (NOT black — this is the key fix)
+ *   3. <a:solidFill>     â†’ solid colour (respects a:alpha)
+ *   4. <a:gradFill>      â†’ use first gradient stop as approximation
+ *   5. <a:pattFill>      â†’ use fgClr as approximation
+ *   6. nothing found     â†’ transparent (NOT black â€” this is the key fix)
  */
 function resolveFill(spPrEl: Element | null): FillResult {
   if (!spPrEl) return { color: 'none', isNone: true };
@@ -257,20 +257,20 @@ function resolveFill(spPrEl: Element | null): FillResult {
   // 1. Explicit no-fill
   if (ch(spPrEl, 'noFill')) return { color: 'none', isNone: true };
 
-  // 2. Image fill — don't paint a background colour; caller draws the image
+  // 2. Image fill â€” don't paint a background colour; caller draws the image
   if (ch(spPrEl, 'blipFill')) return { color: 'none', isNone: true };
 
   // 3. Solid colour
   const solidFill = ch(spPrEl, 'solidFill');
   if (solidFill) {
     const color = colorFromFill(solidFill);
-    // alpha = 0 → effectively transparent
+    // alpha = 0 â†’ effectively transparent
     const alphaM = color.match(/rgba\(\d+,\s*\d+,\s*\d+,\s*([0-9.]+)\)/);
     if (alphaM && parseFloat(alphaM[1]) === 0) return { color: 'none', isNone: true };
     return { color, isNone: false };
   }
 
-  // 4. Gradient fill — approximate with first stop
+  // 4. Gradient fill â€” approximate with first stop
   const gradFill = ch(spPrEl, 'gradFill');
   if (gradFill) {
     const gsLst = ch(gradFill, 'gsLst');
@@ -286,7 +286,7 @@ function resolveFill(spPrEl: Element | null): FillResult {
     return { color: 'rgba(200,200,200,0.5)', isNone: false };
   }
 
-  // 5. Pattern fill — approximate with foreground colour
+  // 5. Pattern fill â€” approximate with foreground colour
   const pattFill = ch(spPrEl, 'pattFill');
   if (pattFill) {
     const fgClr = ch(pattFill, 'fgClr');
@@ -294,11 +294,11 @@ function resolveFill(spPrEl: Element | null): FillResult {
     if (sf) return { color: colorFromFill(sf), isNone: false };
   }
 
-  // 6. No fill found → transparent (not black)
+  // 6. No fill found â†’ transparent (not black)
   return { color: 'none', isNone: true };
 }
 
-// ─── Shape Path Tracer ────────────────────────────────────────────────────────
+// â”€â”€â”€ Shape Path Tracer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function tracePath(
   ctx: CanvasRenderingContext2D,
@@ -351,7 +351,7 @@ function tracePath(
   }
 }
 
-// ─── Text Body Renderer ───────────────────────────────────────────────────────
+// â”€â”€â”€ Text Body Renderer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface RunStyle {
   text: string;
@@ -365,14 +365,14 @@ interface RunStyle {
 }
 
 function parseRPr(rPrEl: Element | null, defaultSizePt = 18): RunStyle {
-  // a:sz is in hundredths of a point → divide by 100 to get pt, use as px approximation
+  // a:sz is in hundredths of a point â†’ divide by 100 to get pt, use as px approximation
   const szHundredths = ai(rPrEl, 'sz', 0);
   const size = szHundredths > 0 ? Math.max(6, Math.round(szHundredths / 100)) : defaultSizePt;
   const bold      = rPrEl?.getAttribute('b') === '1';
   const italic    = rPrEl?.getAttribute('i') === '1';
   const underline = (rPrEl?.getAttribute('u') ?? 'none') !== 'none';
 
-  // Color — if no solidFill on rPr, inherit (caller supplies default)
+  // Color â€” if no solidFill on rPr, inherit (caller supplies default)
   let color = '';
   if (rPrEl) {
     const sf = ch(rPrEl, 'solidFill');
@@ -455,7 +455,7 @@ function renderTxBody(
   const areaH = Math.max(1, t.h - tInsPx - bInsPx);
   const bgIsDark = luminance(bgColor) < 100;
 
-  // ── Collect paragraphs (direct children only) ────────────────────────────
+  // â”€â”€ Collect paragraphs (direct children only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const paraEls: Element[] = [];
   const kids = txBodyEl.childNodes;
   for (let i = 0; i < kids.length; i++) {
@@ -465,7 +465,7 @@ function renderTxBody(
   }
   if (paraEls.length === 0) return;
 
-  // ── Pre-compute rendered lines ───────────────────────────────────────────
+  // â”€â”€ Pre-compute rendered lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   interface RenderedLine {
     runs: RunStyle[];
     lineH: number;
@@ -513,7 +513,7 @@ function renderTxBody(
         style.text = tEl?.textContent ?? '';
         if (style.text) runs.push(style);
       } else if (kid.localName === 'br') {
-        // Line break sentinel — carries rPr for the next line's size
+        // Line break sentinel â€” carries rPr for the next line's size
         const rPr = ch(kid, 'rPr');
         const style = parseRPr(rPr, defStyle.size);
         runs.push({ ...style, text: '', isBreak: true });
@@ -525,14 +525,14 @@ function renderTxBody(
     const lineH = resolveLineSpacingPx(pPr, domSize);
 
     if (runs.length === 0) {
-      // Empty paragraph — still contributes vertical space
+      // Empty paragraph â€” still contributes vertical space
       lines.push({ runs: [], lineH, align, spaceBefore, spaceAfter });
     } else {
       lines.push({ runs, lineH, align, spaceBefore, spaceAfter });
     }
   }
 
-  // ── Vertical anchor computation ──────────────────────────────────────────
+  // â”€â”€ Vertical anchor computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const totalH = lines.reduce((s, l) => s + l.spaceBefore + l.lineH + l.spaceAfter, 0);
   let startY: number;
   if (anchor === 'ctr') {
@@ -549,7 +549,7 @@ function renderTxBody(
     fontScale = Math.max(0.4, areaH / totalH);
   }
 
-  // ── Clip to text box bounds ──────────────────────────────────────────────
+  // â”€â”€ Clip to text box bounds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   ctx.save();
   ctx.beginPath();
   ctx.rect(t.x, t.y, t.w, t.h);
@@ -565,7 +565,7 @@ function renderTxBody(
     const baselineY = curY + lineBlock.lineH * 0.78; // ~78% is typical baseline ratio
 
     if (lineBlock.runs.length === 0) {
-      // Empty paragraph — just advance Y
+      // Empty paragraph â€” just advance Y
       curY += lineBlock.lineH + lineBlock.spaceAfter;
       continue;
     }
@@ -591,7 +591,7 @@ function renderTxBody(
     // Render runs with word-wrap
     for (const run of lineBlock.runs) {
       if (run.isBreak) {
-        // Hard line break — move to next line
+        // Hard line break â€” move to next line
         curY += lineBlock.lineH;
         curX = leftEdge;
         continue;
@@ -664,7 +664,7 @@ function resolveTextColor(color: string, bgIsDark: boolean): string {
   return color;
 }
 
-// ─── Image Renderer ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Image Renderer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function drawImageBlob(
   ctx: CanvasRenderingContext2D,
@@ -708,7 +708,7 @@ async function drawImageBlob(
   }
 }
 
-// ─── Public Helpers ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Public Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function buildRelsMap(relsXml: string): Map<string, string> {
   const map = new Map<string, string>();
@@ -719,7 +719,7 @@ export function buildRelsMap(relsXml: string): Map<string, string> {
       const id  = rels[i].getAttribute('Id');
       const tgt = rels[i].getAttribute('Target');
       if (id && tgt) {
-        // Normalise: ../media/img.png → ppt/media/img.png
+        // Normalise: ../media/img.png â†’ ppt/media/img.png
         map.set(id, tgt.replace(/^\.\.\//, 'ppt/').replace(/^\//, ''));
       }
     }
@@ -727,14 +727,14 @@ export function buildRelsMap(relsXml: string): Map<string, string> {
   return map;
 }
 
-// ─── Main Slide Renderer ──────────────────────────────────────────────────────
+// â”€â”€â”€ Main Slide Renderer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Parse one PPTX slide XML and render it to an HTMLCanvasElement.
  *
  * @param slideXml  - text of ppt/slides/slideN.xml
- * @param relsMap   - relationship ID → zip path (from buildRelsMap)
- * @param getBlob   - async getter: zip path → Blob | null
+ * @param relsMap   - relationship ID â†’ zip path (from buildRelsMap)
+ * @param getBlob   - async getter: zip path â†’ Blob | null
  * @param slideSize - slide dimensions in pixels (from presentation.xml)
  * @param scale     - optional downscale factor (default 1.0)
  */
@@ -754,11 +754,15 @@ export async function renderSlideToCanvas(
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 
-  if (scale !== 1.0) ctx.scale(scale, scale);
+  // ctx is guaranteed non-null from this point â€” assert to keep TS strict happy
+  // inside closures (early return above is sufficient runtime guard).
+  const gctx: CanvasRenderingContext2D = ctx;
+
+  if (scale !== 1.0) gctx.scale(scale, scale);
 
   // Default white background
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, widthPx, heightPx);
+  gctx.fillStyle = '#FFFFFF';
+  gctx.fillRect(0, 0, widthPx, heightPx);
 
   let doc: Document;
   try {
@@ -770,7 +774,7 @@ export async function renderSlideToCanvas(
   const cSld = ch(sld, 'cSld');
   if (!cSld) return canvas;
 
-  // ── Slide background ──────────────────────────────────────────────────────
+  // â”€â”€ Slide background â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let slideBg = 'rgba(255,255,255,1)';
   const bgEl = ch(cSld, 'bg');
   if (bgEl) {
@@ -779,8 +783,8 @@ export async function renderSlideToCanvas(
       const sf = ch(bgPr, 'solidFill');
       if (sf) {
         slideBg = colorFromFill(sf);
-        ctx.fillStyle = slideBg;
-        ctx.fillRect(0, 0, widthPx, heightPx);
+        gctx.fillStyle = slideBg;
+        gctx.fillRect(0, 0, widthPx, heightPx);
       }
       const blipFill = ch(bgPr, 'blipFill');
       if (blipFill) {
@@ -792,7 +796,7 @@ export async function renderSlideToCanvas(
             const blob = await getBlob(path);
             if (blob) {
               const bgT: Xfrm = { ...ZERO_XFRM, x: 0, y: 0, w: widthPx, h: heightPx };
-              await drawImageBlob(ctx, blob, bgT, null);
+              await drawImageBlob(gctx, blob, bgT, null);
             }
           }
         }
@@ -806,11 +810,11 @@ export async function renderSlideToCanvas(
   // Defer text renders so they always appear above shapes
   const deferredText: Array<() => void> = [];
 
-  // ── Recursive element renderer ────────────────────────────────────────────
+  // â”€â”€ Recursive element renderer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async function renderEl(el: Element, parentXfrm?: Xfrm): Promise<void> {
     const name = el.localName;
 
-    // ── Group shape — full recursive traversal with coordinate transform ──
+    // â”€â”€ Group shape â€” full recursive traversal with coordinate transform â”€â”€
     if (name === 'grpSp') {
       const grpSpPr = ch(el, 'grpSpPr');
       // Start with parent as fallback; override if this group has its own xfrm
@@ -822,7 +826,7 @@ export async function renderSlideToCanvas(
           grpXfrm = parseXfrm(xfrmEl, parentXfrm);
         }
       }
-      // Recurse into every child element of the group — this handles:
+      // Recurse into every child element of the group â€” this handles:
       //   p:sp (shapes), p:pic (images), p:cxnSp (connectors),
       //   nested p:grpSp (sub-groups), p:graphicFrame (tables/charts)
       const kids = el.childNodes;
@@ -830,7 +834,7 @@ export async function renderSlideToCanvas(
         const kid = kids[i];
         if (kid.nodeType !== 1) continue;
         const kidName = (kid as Element).localName;
-        // Skip grpSpPr — that's metadata, not a renderable child
+        // Skip grpSpPr â€” that's metadata, not a renderable child
         if (kidName === 'grpSpPr' || kidName === 'nvGrpSpPr') continue;
         try { await renderEl(kid as Element, grpXfrm); } catch (e) {
           console.warn('[pptx-renderer] grpSp child failed:', (e as Error).message);
@@ -839,7 +843,7 @@ export async function renderSlideToCanvas(
       return;
     }
 
-    // ── Picture / image ────────────────────────────────────────────────────
+    // â”€â”€ Picture / image â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (name === 'pic') {
       const spPr = ch(el, 'spPr');
       const xfrmEl = spPr ? ch(spPr, 'xfrm') : null;
@@ -863,17 +867,17 @@ export async function renderSlideToCanvas(
       const hasTransform = Math.abs(t.rot) > 0.001 || t.flipH || t.flipV;
 
       if (hasTransform) {
-        ctx.save();
-        applyTransform(ctx, t);
-        await drawImageBlob(ctx, blob, t, srcRect);
-        ctx.restore();
+        gctx.save();
+        applyTransform(gctx, t);
+        await drawImageBlob(gctx, blob, t, srcRect);
+        gctx.restore();
       } else {
-        await drawImageBlob(ctx, blob, t, srcRect);
+        await drawImageBlob(gctx, blob, t, srcRect);
       }
       return;
     }
 
-    // ── Shape / connector ──────────────────────────────────────────────────
+    // â”€â”€ Shape / connector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (name === 'sp' || name === 'cxnSp') {
       const spPr = ch(el, 'spPr');
       const txBody = ch(el, 'txBody');
@@ -887,11 +891,11 @@ export async function renderSlideToCanvas(
       const hasTransform = Math.abs(t.rot) > 0.001 || t.flipH || t.flipV;
 
       if (hasTransform) {
-        ctx.save();
-        applyTransform(ctx, t);
+        gctx.save();
+        applyTransform(gctx, t);
       }
 
-      // ── Image fill (blipFill can live in spPr or directly on sp element)
+      // â”€â”€ Image fill (blipFill can live in spPr or directly on sp element)
       // Check both locations to avoid missing it when shape has image texture.
       const blipFillSp = (spPr ? ch(spPr, 'blipFill') : null) ?? ch(el, 'blipFill');
       if (blipFillSp) {
@@ -903,28 +907,28 @@ export async function renderSlideToCanvas(
             const blob = await getBlob(imgPath);
             if (blob) {
               const srcRect = ch(blipFillSp, 'srcRect');
-              await drawImageBlob(ctx, blob, t, srcRect);
+              await drawImageBlob(gctx, blob, t, srcRect);
             }
           }
         }
       }
 
-      // ── Shape background fill
+      // â”€â”€ Shape background fill
       // resolveFill returns isNone=true for: noFill, blipFill, or no fill at all.
-      // In all those cases we skip painting — prevents the black-box bug.
+      // In all those cases we skip painting â€” prevents the black-box bug.
       let shapeFillColor = slideBg;
       if (!blipFillSp && spPr) {
         const fillResult = resolveFill(spPr);
         if (!fillResult.isNone) {
           shapeFillColor = fillResult.color;
-          tracePath(ctx, prst, t.x, t.y, t.w, t.h);
-          ctx.fillStyle = fillResult.color;
-          ctx.fill();
+          tracePath(gctx, prst, t.x, t.y, t.w, t.h);
+          gctx.fillStyle = fillResult.color;
+          gctx.fill();
         }
-        // fillResult.isNone → skip fill entirely (transparent shape)
+        // fillResult.isNone â†’ skip fill entirely (transparent shape)
       }
 
-      // ── Border / stroke (only when ln has an explicit solidFill)
+      // â”€â”€ Border / stroke (only when ln has an explicit solidFill)
       if (spPr) {
         const ln = ch(spPr, 'ln');
         if (ln && !ch(ln, 'noFill')) {
@@ -932,26 +936,26 @@ export async function renderSlideToCanvas(
           if (solidFillLn) {
             const lnColor = colorFromFill(solidFillLn);
             const lnW = Math.max(0.5, px(ai(ln, 'w', 12700)));
-            tracePath(ctx, prst, t.x, t.y, t.w, t.h);
-            ctx.strokeStyle = lnColor;
-            ctx.lineWidth = lnW;
-            ctx.stroke();
+            tracePath(gctx, prst, t.x, t.y, t.w, t.h);
+            gctx.strokeStyle = lnColor;
+            gctx.lineWidth = lnW;
+            gctx.stroke();
           }
         }
       }
 
-      if (hasTransform) ctx.restore();
+      if (hasTransform) gctx.restore();
 
-      // ── Text body — always deferred to render on top of all shapes
+      // â”€â”€ Text body â€” always deferred to render on top of all shapes
       if (txBody) {
         const capturedT = { ...t };
         const capturedBg = shapeFillColor;
-        deferredText.push(() => renderTxBody(ctx, txBody, capturedT, capturedBg));
+        deferredText.push(() => renderTxBody(gctx, txBody, capturedT, capturedBg));
       }
       return;
     }
 
-    // ── Table (graphicFrame) ───────────────────────────────────────────────
+    // â”€â”€ Table (graphicFrame) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (name === 'graphicFrame') {
       const xfrmEl = ch(el, 'xfrm') ?? desc(el, 'xfrm');
       if (!xfrmEl) return;
@@ -983,21 +987,21 @@ export async function renderSlideToCanvas(
           const tcPr = ch(cell, 'tcPr');
           const cellFill = tcPr ? resolveFill(tcPr) : { color: 'none', isNone: true };
           if (!cellFill.isNone) {
-            ctx.fillStyle = cellFill.color;
-            ctx.fillRect(colX, rowY, cw, rowH);
+            gctx.fillStyle = cellFill.color;
+            gctx.fillRect(colX, rowY, cw, rowH);
           } else {
-            ctx.fillStyle = ri % 2 === 0 ? 'rgba(255,255,255,1)' : 'rgba(243,244,246,1)';
-            ctx.fillRect(colX, rowY, cw, rowH);
+            gctx.fillStyle = ri % 2 === 0 ? 'rgba(255,255,255,1)' : 'rgba(243,244,246,1)';
+            gctx.fillRect(colX, rowY, cw, rowH);
           }
-          ctx.strokeStyle = 'rgba(209,213,219,0.8)';
-          ctx.lineWidth = 0.5;
-          ctx.strokeRect(colX, rowY, cw, rowH);
+          gctx.strokeStyle = 'rgba(209,213,219,0.8)';
+          gctx.lineWidth = 0.5;
+          gctx.strokeRect(colX, rowY, cw, rowH);
 
           const cellTxBody = ch(cell, 'txBody');
           if (cellTxBody) {
             const cellT: Xfrm = { ...ZERO_XFRM, x: colX, y: rowY, w: cw, h: rowH };
             const bg = cellFill.isNone ? slideBg : cellFill.color;
-            deferredText.push(() => renderTxBody(ctx, cellTxBody, cellT, bg));
+            deferredText.push(() => renderTxBody(gctx, cellTxBody, cellT, bg));
           }
           colX += cw;
         }
@@ -1006,7 +1010,7 @@ export async function renderSlideToCanvas(
     }
   }
 
-  // ── Traverse spTree ───────────────────────────────────────────────────────
+  // â”€â”€ Traverse spTree â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const treeKids = spTree.childNodes;
   for (let i = 0; i < treeKids.length; i++) {
     const kid = treeKids[i];
@@ -1018,27 +1022,27 @@ export async function renderSlideToCanvas(
     }
   }
 
-  // ── Render deferred text on top ───────────────────────────────────────────
+  // â”€â”€ Render deferred text on top â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   for (const fn of deferredText) {
     try { fn(); } catch (e) {
       console.warn('[pptx-renderer] Text render failed:', (e as Error).message);
     }
   }
 
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  gctx.setTransform(1, 0, 0, 1, 0, 0);
   return canvas;
 }
 
-// ─── Rotation Helpers ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Rotation Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function applyTransform(ctx: CanvasRenderingContext2D, t: Xfrm): void {
+function applyTransform(gctx: CanvasRenderingContext2D, t: Xfrm): void {
   const cx = t.x + t.w / 2;
   const cy = t.y + t.h / 2;
-  ctx.translate(cx, cy);
-  if (t.rot) ctx.rotate(t.rot);
-  if (t.flipH) ctx.scale(-1, 1);
-  if (t.flipV) ctx.scale(1, -1);
-  ctx.translate(-cx, -cy);
+  gctx.translate(cx, cy);
+  if (t.rot) gctx.rotate(t.rot);
+  if (t.flipH) gctx.scale(-1, 1);
+  if (t.flipV) gctx.scale(1, -1);
+  gctx.translate(-cx, -cy);
 }
 
 // Unused placeholder (rotations handled inline above)

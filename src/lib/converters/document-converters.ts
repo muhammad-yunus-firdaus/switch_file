@@ -1,4 +1,5 @@
-﻿import { registerConverter } from './registry';
+﻿import type { PDFPage, PDFFont, RGB } from 'pdf-lib';
+import { registerConverter } from './registry';
 
 // ============================================================================
 // Fontkit Integration & Global Font Caching
