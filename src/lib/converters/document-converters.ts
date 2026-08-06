@@ -1,5 +1,4 @@
-import type { PDFPage, PDFFont, RGB } from 'pdf-lib';
-import { registerConverter } from './registry';
+﻿import { registerConverter } from './registry';
 
 // ============================================================================
 // Fontkit Integration & Global Font Caching
@@ -27,10 +26,10 @@ async function getCustomFontBold(): Promise<ArrayBuffer> {
 function sanitizeWinAnsiText(str: string): string {
   if (!str) return '';
   return str
-    .replace(/→/g, '->')
-    .replace(/←/g, '<-')
-    .replace(/–|—/g, '-')
-    .replace(/•/g, '*')
+    .replace(/â†’/g, '->')
+    .replace(/â†/g, '<-')
+    .replace(/â€“|â€”/g, '-')
+    .replace(/â€¢/g, '*')
     .replace(/[^\x00-\xFF]/g, ''); // Remove non-WinAnsi characters
 }
 
@@ -61,7 +60,7 @@ function drawTextSafely(page: PDFPage, text: string, options: DrawTextOptions) {
 }
 
 // ============================================================================
-// XLSX → PDF
+// XLSX â†’ PDF
 // ============================================================================
 
 async function xlsxToPdf(file: File): Promise<Blob> {
@@ -81,7 +80,7 @@ async function xlsxToPdf(file: File): Promise<Blob> {
   });
 
   if (data.length === 0) {
-    throw new Error('Spreadsheet is empty — nothing to convert');
+    throw new Error('Spreadsheet is empty â€” nothing to convert');
   }
 
   const pdfDoc = await PDFDocument.create();
@@ -181,7 +180,7 @@ async function xlsxToPdf(file: File): Promise<Blob> {
 }
 
 // ============================================================================
-// DOCX → PDF
+// DOCX â†’ PDF
 // ============================================================================
 
 async function docxToPdf(file: File): Promise<Blob> {
@@ -194,7 +193,7 @@ async function docxToPdf(file: File): Promise<Blob> {
 
   const docXml = zip.file('word/document.xml');
   if (!docXml) {
-    throw new Error('Invalid DOCX file — missing word/document.xml');
+    throw new Error('Invalid DOCX file â€” missing word/document.xml');
   }
 
   const xmlContent = await docXml.async('text');
@@ -328,395 +327,141 @@ async function docxToPdf(file: File): Promise<Blob> {
   return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
 }
 
+// ============================================================================
+// PPTX â†’ PDF  (Refactored â€” 2-fase: Canvas Rendering â†’ pdf-lib assembly)
+// ============================================================================
+
 async function pptxToPdf(file: File): Promise<Blob> {
   const { PDFDocument } = await import('pdf-lib');
   const JSZip = (await import('jszip')).default;
+  const { renderSlideToCanvas, buildRelsMap } = await import('./pptx-renderer');
 
-  interface Transform {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    chX?: number;
-    chY?: number;
-    chW?: number;
-    chH?: number;
+  const arrayBuffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(arrayBuffer);
+
+  // â”€â”€ Cari file zip secara case-insensitive â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const zipKeys = Object.keys(zip.files);
+  function findZipEntry(path: string) {
+    const lc = path.toLowerCase().replace(/^\//, '');
+    for (const k of zipKeys) {
+      if (k.toLowerCase() === lc) return zip.files[k];
+    }
+    return zip.file(path) ?? null;
   }
 
+  async function getBlob(path: string): Promise<Blob | null> {
+    try {
+      const entry = findZipEntry(path);
+      if (!entry) return null;
+      return await entry.async('blob');
+    } catch { return null; }
+  }
+
+  // â”€â”€ Baca dimensi slide dari presentation.xml â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  let slideWidthPx = 960;
+  let slideHeightPx = 540;
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const zip = await JSZip.loadAsync(arrayBuffer);
-
-    const findZipFile = (path: string) => {
-      const clean = path.replace(/^\//, '').toLowerCase();
-      const keys = Object.keys(zip.files);
-      for (let idx = 0; idx < keys.length; idx++) {
-        if (keys[idx].toLowerCase() === clean) {
-          return zip.files[keys[idx]];
-        }
+    const presEntry = findZipEntry('ppt/presentation.xml');
+    if (presEntry) {
+      const presXml = await presEntry.async('text');
+      const presDoc = new DOMParser().parseFromString(presXml, 'application/xml');
+      const sldSz =
+        presDoc.getElementsByTagNameNS('*', 'sldSz')[0] ??
+        presDoc.getElementsByTagName('sldSz')[0];
+      if (sldSz) {
+        const cx = parseInt(sldSz.getAttribute('cx') ?? '', 10);
+        const cy = parseInt(sldSz.getAttribute('cy') ?? '', 10);
+        if (!isNaN(cx) && cx > 0) slideWidthPx  = Math.round(cx / 9525);
+        if (!isNaN(cy) && cy > 0) slideHeightPx = Math.round(cy / 9525);
       }
-      return zip.file(path);
-    };
-
-    const slideFiles = Object.keys(zip.files).filter(name =>
-      /^ppt\/slides\/slide\d+\.xml$/.test(name)
-    );
-
-    if (slideFiles.length === 0) {
-      throw new Error('Invalid PPTX file — no slides found');
     }
+  } catch { /* pakai default 16:9 */ }
 
-    slideFiles.sort((a, b) => {
-      const numA = parseInt(a.replace(/\D/g, ''), 10);
-      const numB = parseInt(b.replace(/\D/g, ''), 10);
-      return numA - numB;
+  // Batasi ukuran canvas agar tidak crash di browser mobile
+  const MAX_W = 1920;
+  const scale = Math.min(1.0, MAX_W / slideWidthPx);
+  const canvasW = Math.round(slideWidthPx  * scale);
+  const canvasH = Math.round(slideHeightPx * scale);
+
+  // â”€â”€ Kumpulkan semua file slide, urutkan numerik â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const slideFiles = zipKeys
+    .filter(k => /^ppt\/slides\/slide\d+\.xml$/i.test(k))
+    .sort((a, b) => {
+      const na = parseInt(a.replace(/\D/g, ''), 10);
+      const nb = parseInt(b.replace(/\D/g, ''), 10);
+      return na - nb;
     });
 
-    let slideWidth = 960;
-    let slideHeight = 540;
-    try {
-      const presentationXmlFile = findZipFile('ppt/presentation.xml');
-      const presentationXml = presentationXmlFile ? await presentationXmlFile.async('text') : null;
-      if (presentationXml) {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(presentationXml, 'application/xml');
-        const sldSz = doc.getElementsByTagNameNS('*', 'sldSz')[0] || doc.getElementsByTagName('sldSz')[0];
-        if (sldSz) {
-          const cx = parseInt(sldSz.getAttribute('cx') || '', 10);
-          const cy = parseInt(sldSz.getAttribute('cy') || '', 10);
-          if (!isNaN(cx) && !isNaN(cy)) {
-            slideWidth = Math.round(cx / 9525);
-            slideHeight = Math.round(cy / 9525);
-          }
-        }
-      }
-    } catch {
-      // Default to 16:9 widescreen
-    }
-
-    const pdfDoc = await PDFDocument.create();
-
-    for (let i = 0; i < slideFiles.length; i++) {
-      const slideFile = slideFiles[i];
-      const slideXml = await zip.file(slideFile)?.async('text');
-      if (!slideXml) continue;
-
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(slideXml, 'application/xml');
-
-      const relsMap = new Map<string, string>();
-      try {
-        const slideName = slideFile.split('/').pop();
-        const relsFile = `ppt/slides/_rels/${slideName}.rels`;
-        const relsFileObj = findZipFile(relsFile);
-        const relsXml = relsFileObj ? await relsFileObj.async('text') : null;
-        if (relsXml) {
-          const relsDoc = parser.parseFromString(relsXml, 'application/xml');
-          const relationships = relsDoc.getElementsByTagName('Relationship');
-          for (let r = 0; r < relationships.length; r++) {
-            const id = relationships[r].getAttribute('Id');
-            const target = relationships[r].getAttribute('Target');
-            if (id && target) {
-              const cleanTarget = target.replace(/^\.\.\//, 'ppt/');
-              relsMap.set(id, cleanTarget);
-            }
-          }
-        }
-      } catch {
-        // Safe skip rels
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = slideWidth;
-      canvas.height = slideHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) continue;
-
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, slideWidth, slideHeight);
-
-      const findChildByLocalName = (parent: Element, name: string): Element | null => {
-        const children = parent.childNodes;
-        for (let idx = 0; idx < children.length; idx++) {
-          const child = children[idx];
-          if (child.nodeType === 1 && (child as Element).localName === name) {
-            return child as Element;
-          }
-        }
-        const descendants = parent.getElementsByTagName('*');
-        for (let idx = 0; idx < descendants.length; idx++) {
-          if (descendants[idx].localName === name) {
-            return descendants[idx];
-          }
-        }
-        return null;
-      };
-
-      const parseXfrm = (xfrmNode: Element, parentXfrm?: Transform): Transform => {
-        const off = findChildByLocalName(xfrmNode, 'off');
-        const ext = findChildByLocalName(xfrmNode, 'ext');
-        const chOff = findChildByLocalName(xfrmNode, 'chOff');
-        const extCh = findChildByLocalName(xfrmNode, 'chExt');
-
-        const lcx = off ? parseInt(off.getAttribute('x') || '0', 10) : 0;
-        const lcy = off ? parseInt(off.getAttribute('y') || '0', 10) : 0;
-        const lcw = ext ? parseInt(ext.getAttribute('cx') || '0', 10) : 0;
-        const lch = ext ? parseInt(ext.getAttribute('cy') || '0', 10) : 0;
-
-        let x = lcx / 9525;
-        let y = lcy / 9525;
-        let w = lcw / 9525;
-        let h = lch / 9525;
-
-        if (parentXfrm && parentXfrm.chW && parentXfrm.chH) {
-          const scaleX = parentXfrm.w / (parentXfrm.chW / 9525);
-          const scaleY = parentXfrm.h / (parentXfrm.chH / 9525);
-          const dx = x - (parentXfrm.chX || 0) / 9525;
-          const dy = y - (parentXfrm.chY || 0) / 9525;
-
-          x = parentXfrm.x + dx * scaleX;
-          y = parentXfrm.y + dy * scaleY;
-          w = w * scaleX;
-          h = h * scaleY;
-        }
-
-        const result: Transform = { x, y, w, h };
-
-        if (chOff && extCh) {
-          result.chX = parseInt(chOff.getAttribute('x') || '0', 10);
-          result.chY = parseInt(chOff.getAttribute('y') || '0', 10);
-          result.chW = parseInt(extCh.getAttribute('cx') || '1', 10);
-          result.chH = parseInt(extCh.getAttribute('cy') || '1', 10);
-        }
-
-        return result;
-      };
-
-      const renderElement = async (elem: Element, parentXfrm?: Transform) => {
-        const localName = elem.localName;
-
-        if (localName === 'grpSp') {
-          const grpSpPr = findChildByLocalName(elem, 'grpSpPr');
-          let currentXfrm = parentXfrm;
-          if (grpSpPr) {
-            const xfrm = findChildByLocalName(grpSpPr, 'xfrm');
-            if (xfrm) {
-              currentXfrm = parseXfrm(xfrm, parentXfrm);
-            }
-          }
-          const children = elem.childNodes;
-          for (let c = 0; c < children.length; c++) {
-            const child = children[c];
-            if (child.nodeType === 1) {
-              await renderElement(child as Element, currentXfrm);
-            }
-          }
-        } else if (localName === 'pic') {
-          const xfrm = findChildByLocalName(elem, 'xfrm');
-          if (!xfrm) return;
-          const t = parseXfrm(xfrm, parentXfrm);
-
-          const blip = findChildByLocalName(elem, 'blip');
-          if (!blip) return;
-
-          let embedId = '';
-          for (let attr = 0; attr < blip.attributes.length; attr++) {
-            if (blip.attributes[attr].name.endsWith('embed')) {
-              embedId = blip.attributes[attr].value;
-              break;
-            }
-          }
-          if (!embedId) return;
-
-          const targetPath = relsMap.get(embedId);
-          if (targetPath) {
-            const fileObj = findZipFile(targetPath);
-            if (fileObj) {
-              const imgBlob = await fileObj.async('blob');
-              if (imgBlob) {
-                const url = URL.createObjectURL(imgBlob);
-                const img = new Image();
-                await new Promise((resolve) => {
-                  img.onload = resolve;
-                  img.onerror = resolve;
-                  img.src = url;
-                });
-                ctx.drawImage(img, t.x, t.y, t.w, t.h);
-                URL.revokeObjectURL(url);
-              }
-            }
-          }
-        } else if (localName === 'sp') {
-          const xfrm = findChildByLocalName(elem, 'xfrm');
-          if (!xfrm) return;
-          const t = parseXfrm(xfrm, parentXfrm);
-
-          if (!parentXfrm) {
-            const spPr = findChildByLocalName(elem, 'spPr');
-            if (spPr) {
-              const solidFill = findChildByLocalName(spPr, 'solidFill');
-              if (solidFill) {
-                const srgbClr = findChildByLocalName(solidFill, 'srgbClr');
-                const sysClr = findChildByLocalName(solidFill, 'sysClr');
-                const val = srgbClr?.getAttribute('val') || sysClr?.getAttribute('lastClr');
-                if (val && /^[0-9A-Fa-f]{6}$/.test(val) && val.toLowerCase() !== '000000') {
-                  ctx.fillStyle = `#${val}`;
-                  ctx.fillRect(t.x, t.y, t.w, t.h);
-                }
-              }
-
-              const ln = findChildByLocalName(spPr, 'ln');
-              if (ln) {
-                const solidFillLn = findChildByLocalName(ln, 'solidFill');
-                const srgbClrLn = solidFillLn ? findChildByLocalName(solidFillLn, 'srgbClr') : null;
-                const valLn = srgbClrLn?.getAttribute('val');
-                if (valLn && /^[0-9A-Fa-f]{6}$/.test(valLn)) {
-                  ctx.strokeStyle = `#${valLn}`;
-                  ctx.lineWidth = 1;
-                  ctx.strokeRect(t.x, t.y, t.w, t.h);
-                }
-              }
-            }
-          }
-
-          const txBody = findChildByLocalName(elem, 'txBody');
-          if (!txBody) return;
-
-          const allChildren = txBody.getElementsByTagName('*');
-          const paragraphs: Element[] = [];
-          for (let c = 0; c < allChildren.length; c++) {
-            if (allChildren[c].localName === 'p') {
-              paragraphs.push(allChildren[c]);
-            }
-          }
-
-          let currentTextY = t.y + 18;
-
-          for (let p = 0; p < paragraphs.length; p++) {
-            const para = paragraphs[p];
-            let align = 'left';
-            const pPr = findChildByLocalName(para, 'pPr');
-            if (pPr) {
-              const algnAttr = pPr.getAttribute('algn');
-              if (algnAttr === 'ctr') align = 'center';
-              else if (algnAttr === 'r') align = 'right';
-            }
-
-            let runFontSize = 14;
-            let runColor = '#1E293B';
-            let runBold = false;
-
-            const firstRPr = para.getElementsByTagName('*');
-            for (let idx = 0; idx < firstRPr.length; idx++) {
-              if (firstRPr[idx].localName === 'rPr') {
-                const rPr = firstRPr[idx];
-                const sz = rPr.getAttribute('sz');
-                if (sz) {
-                  runFontSize = Math.round(parseInt(sz, 10) / 100);
-                }
-                const b = rPr.getAttribute('b');
-                if (b === '1' || b === 'true') {
-                  runBold = true;
-                }
-                const solidFill = findChildByLocalName(rPr, 'solidFill');
-                if (solidFill) {
-                  const srgbClr = findChildByLocalName(solidFill, 'srgbClr');
-                  const val = srgbClr?.getAttribute('val');
-                  if (val && /^[0-9A-Fa-f]{6}$/.test(val)) {
-                    runColor = `#${val}`;
-                  }
-                }
-                break;
-              }
-            }
-
-            let paragraphText = '';
-            const runs = para.childNodes;
-            for (let r = 0; r < runs.length; r++) {
-              const run = runs[r];
-              if (run.nodeType === 1) {
-                const el = run as Element;
-                if (el.localName === 'r' || el.localName === 'fld') {
-                  const tNodes = el.getElementsByTagName('*');
-                  for (let tIdx = 0; tIdx < tNodes.length; tIdx++) {
-                    if (tNodes[tIdx].localName === 't') {
-                      paragraphText += tNodes[tIdx].textContent || '';
-                    }
-                  }
-                } else if (el.localName === 'br') {
-                  paragraphText += '\n';
-                }
-              }
-            }
-
-            if (paragraphText.trim()) {
-              ctx.fillStyle = runColor;
-              ctx.font = `${runBold ? 'bold ' : ''}${runFontSize}px Arial, sans-serif`;
-              ctx.textAlign = align as CanvasTextAlign;
-
-              const drawX = align === 'center' ? t.x + t.w / 2 : align === 'right' ? t.x + t.w - 8 : t.x + 8;
-
-              const lines = paragraphText.split('\n');
-              for (const lineText of lines) {
-                const words = lineText.split(' ');
-                let line = '';
-                let currentLineY = currentTextY;
-
-                for (let n = 0; n < words.length; n++) {
-                  const testLine = line + words[n] + ' ';
-                  const metrics = ctx.measureText(testLine);
-                  const testWidth = metrics.width;
-                  if (testWidth > (t.w - 16) && n > 0) {
-                    ctx.fillText(line, drawX, currentLineY);
-                    line = words[n] + ' ';
-                    currentLineY += runFontSize + 4;
-                  } else {
-                    line = testLine;
-                  }
-                }
-                ctx.fillText(line, drawX, currentLineY);
-                currentTextY = currentLineY + runFontSize + 8;
-              }
-              ctx.textAlign = 'left';
-            }
-          }
-        }
-      };
-
-      const sld = doc.getElementsByTagNameNS('*', 'sld')[0] || doc.getElementsByTagName('sld')[0];
-      if (sld) {
-        const cSld = findChildByLocalName(sld, 'cSld');
-        if (cSld) {
-          const spTree = findChildByLocalName(cSld, 'spTree');
-          if (spTree) {
-            const children = spTree.childNodes;
-            for (let c = 0; c < children.length; c++) {
-              const child = children[c];
-              if (child.nodeType === 1) {
-                await renderElement(child as Element);
-              }
-            }
-          }
-        }
-      }
-
-      const slidePngDataUrl = canvas.toDataURL('image/png');
-      const page = pdfDoc.addPage([slideWidth, slideHeight]);
-      const image = await pdfDoc.embedPng(slidePngDataUrl);
-      page.drawImage(image, {
-        x: 0,
-        y: 0,
-        width: slideWidth,
-        height: slideHeight,
-      });
-    }
-
-    const pdfBytes = await pdfDoc.save();
-    return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
-  } catch (error) {
-    console.error('PPTX to PDF error:', error);
-    throw new Error('Gagal memuat elemen gambar PPTX. Pastikan file PPTX tidak terkunci atau coba simpan sebagai PDF langsung melalui Microsoft PowerPoint.');
+  if (slideFiles.length === 0) {
+    throw new Error('Invalid PPTX â€” tidak ada slide ditemukan.');
   }
+
+  const pdfDoc = await PDFDocument.create();
+
+  // â”€â”€ Iterasi setiap slide â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  for (let i = 0; i < slideFiles.length; i++) {
+    const slideFile = slideFiles[i];
+    let canvas: HTMLCanvasElement | null = null;
+
+    try {
+      // 1) Baca XML slide
+      const slideEntry = zip.file(slideFile);
+      const slideXml = slideEntry ? await slideEntry.async('text') : null;
+      if (!slideXml) {
+        pdfDoc.addPage([slideWidthPx, slideHeightPx]);
+        continue;
+      }
+
+      // 2) Baca rels slide
+      const slideName = slideFile.split('/').pop() ?? `slide${i + 1}.xml`;
+      const relsPath = `ppt/slides/_rels/${slideName}.rels`;
+      const relsEntry = findZipEntry(relsPath);
+      const relsXml = relsEntry ? await relsEntry.async('text') : null;
+      const relsMap = relsXml
+        ? buildRelsMap(relsXml)
+        : new Map<string, string>();
+
+      // 3) Fase 1 â€” Render slide ke canvas
+      canvas = await renderSlideToCanvas(
+        slideXml,
+        relsMap,
+        getBlob,
+        { widthPx: slideWidthPx, heightPx: slideHeightPx },
+        scale
+      );
+
+      // 4) Fase 2 â€” Canvas â†’ JPEG â†’ embed ke PDF
+      if (canvas) {
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        const b64 = dataUrl.split(',')[1];
+        const jpgBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+        const page = pdfDoc.addPage([slideWidthPx, slideHeightPx]);
+        const img = await pdfDoc.embedJpg(jpgBytes);
+        page.drawImage(img, { x: 0, y: 0, width: slideWidthPx, height: slideHeightPx });
+
+        // Bebaskan memori canvas segera
+        canvas.width = 0;
+        canvas.height = 0;
+        canvas = null;
+      } else {
+        pdfDoc.addPage([slideWidthPx, slideHeightPx]);
+      }
+    } catch (slideErr) {
+      console.warn(`[pptxToPdf] Slide ${i + 1} gagal, menambahkan halaman kosong:`, slideErr);
+      try {
+        if (canvas) { canvas.width = 0; canvas.height = 0; }
+        pdfDoc.addPage([canvasW, canvasH]);
+      } catch { /* lanjutkan */ }
+    }
+  }
+
+  if (pdfDoc.getPageCount() === 0) {
+    throw new Error('Tidak ada slide yang berhasil dikonversi.');
+  }
+
+  const pdfBytes = await pdfDoc.save();
+  return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
 }
 
 // ============================================================================
@@ -745,9 +490,7 @@ async function pdfToPptx(file: File): Promise<Blob> {
 
     const sortedItems = [...items].sort((a, b) => {
       const yDiff = b.transform[5] - a.transform[5];
-      if (Math.abs(yDiff) > 5) {
-        return yDiff;
-      }
+      if (Math.abs(yDiff) > 5) return yDiff;
       return a.transform[4] - b.transform[4];
     });
 
@@ -755,36 +498,22 @@ async function pdfToPptx(file: File): Promise<Blob> {
     let lastY = -1;
     for (const item of sortedItems) {
       const currentY = item.transform[5];
-      if (lastY !== -1 && Math.abs(currentY - lastY) > 5) {
-        pageText += '\n';
-      } else if (lastY !== -1) {
-        pageText += ' ';
-      }
+      if (lastY !== -1 && Math.abs(currentY - lastY) > 5) pageText += '\n';
+      else if (lastY !== -1) pageText += ' ';
       pageText += item.str;
       lastY = currentY;
     }
 
     const slide = pptx.addSlide();
-    
     slide.addText(`Slide ${i}`, {
-      x: 0.5,
-      y: 0.5,
-      w: '90%',
-      h: 0.8,
-      fontSize: 24,
-      bold: true,
-      color: '2563EB',
+      x: 0.5, y: 0.5, w: '90%', h: 0.8,
+      fontSize: 24, bold: true, color: '2563EB',
     });
 
     if (pageText.trim()) {
       slide.addText(pageText.substring(0, 1500), {
-        x: 0.5,
-        y: 1.5,
-        w: '90%',
-        h: 5.0,
-        fontSize: 12,
-        color: '1E293B',
-        valign: 'top',
+        x: 0.5, y: 1.5, w: '90%', h: 5.0,
+        fontSize: 12, color: '1E293B', valign: 'top',
       });
     }
   }
