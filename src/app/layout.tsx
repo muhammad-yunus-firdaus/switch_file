@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { InstallPwaBanner } from "@/components/InstallPwaBanner";
 import "./globals.css";
 
 // ============================================================================
@@ -49,15 +50,27 @@ export const metadata: Metadata = {
 // Root Layout
 // ============================================================================
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+interface LayoutProps {
+  children: React.ReactNode;
+}
+
+export default function RootLayout({ children }: LayoutProps) {
   return (
     <html
       lang="en"
       className={`${inter.variable} ${plusJakarta.variable} h-full antialiased overflow-x-hidden`}
     >
+      <head>
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#3b82f6" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="SwitchFile" />
+      </head>
       <body className="min-h-full bg-[#F3F4F6] font-sans text-[#1E293B] overflow-x-hidden">
         <TooltipProvider delay={300}>
           {children}
+          <InstallPwaBanner />
         </TooltipProvider>
       </body>
     </html>

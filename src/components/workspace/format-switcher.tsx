@@ -50,7 +50,7 @@ export function FormatSwitcher({
       return ['pdf', 'docx', 'xlsx', 'txt'].includes(fmt);
     }
     if (activeCategory === 'images') {
-      return ['png', 'jpg', 'webp', 'heic'].includes(fmt);
+      return ['png', 'jpg', 'webp', 'heic', 'avif'].includes(fmt);
     }
     return true;
   });
@@ -63,7 +63,7 @@ export function FormatSwitcher({
           return ['pdf', 'docx', 'xlsx', 'txt'].includes(fmt);
         }
         if (activeCategory === 'images') {
-          return ['png', 'jpg', 'webp', 'heic'].includes(fmt);
+          return ['png', 'jpg', 'webp', 'heic', 'avif'].includes(fmt);
         }
         return true;
       });

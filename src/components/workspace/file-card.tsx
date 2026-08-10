@@ -55,7 +55,7 @@ function getStatusColor(status: FileItem['status']) {
 
 export function FileCard({ file, onDownload, onRemove }: FileCardProps) {
   const statusColor = getStatusColor(file.status);
-  const isImage = ['png', 'jpg', 'webp', 'heic'].includes(file.sourceFormat);
+  const isImage = ['png', 'jpg', 'webp', 'heic', 'avif'].includes(file.sourceFormat);
 
   return (
     <div
@@ -114,6 +114,11 @@ export function FileCard({ file, onDownload, onRemove }: FileCardProps) {
               <span className="font-medium text-[#16A34A]">
                 {formatFileSize(file.convertedSize)}
               </span>
+              {file.size > file.convertedSize && (
+                <Badge className="text-[10px] font-semibold bg-[#16A34A]/10 text-[#16A34A] border-none">
+                  hemat {Math.round(((file.size - file.convertedSize) / file.size) * 100)}%
+                </Badge>
+              )}
             </>
           )}
           {file.processingTimeMs && (

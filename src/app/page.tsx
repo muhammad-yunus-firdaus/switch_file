@@ -49,7 +49,7 @@ export default function HomePage() {
 
       if (sourceFormat) {
         const docsFormats = ['pdf', 'docx', 'xlsx', 'txt', 'pptx'];
-        const imgsFormats = ['png', 'jpg', 'webp', 'heic'];
+        const imgsFormats = ['png', 'jpg', 'webp', 'heic', 'avif'];
 
         if (newCategory === 'documents' && !docsFormats.includes(sourceFormat)) {
           setSourceFormat(null);

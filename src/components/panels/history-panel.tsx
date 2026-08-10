@@ -56,7 +56,7 @@ function getTimeAgo(date: Date): string {
 }
 
 function isImageFormat(format: string): boolean {
-  return ['png', 'jpg', 'webp', 'heic'].includes(format);
+  return ['png', 'jpg', 'webp', 'heic', 'avif'].includes(format);
 }
 
 // ============================================================================

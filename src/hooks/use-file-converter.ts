@@ -180,6 +180,13 @@ export function useFileConverter(
         const endTime = performance.now();
         const processingTimeMs = Math.round(endTime - startTime);
 
+        const savedPercent = (convertedBlob as Blob & { savedPercent?: number }).savedPercent;
+        const resolvedSavedPercent = typeof savedPercent === 'number'
+          ? savedPercent
+          : (fileItem.size > convertedBlob.size
+              ? ((fileItem.size - convertedBlob.size) / fileItem.size) * 100
+              : 0);
+
         // Update to converted state
         setFiles((prev) =>
           prev.map((f) =>
@@ -191,6 +198,7 @@ export function useFileConverter(
                   convertedBlob,
                   convertedSize: convertedBlob.size,
                   processingTimeMs,
+                  savedPercent: resolvedSavedPercent,
                 }
               : f
           )
@@ -208,6 +216,7 @@ export function useFileConverter(
           status: 'success',
           createdAt: new Date(),
           convertedBlob,
+          savedPercent: resolvedSavedPercent,
         };
 
         await addHistoryEntry(historyEntry);

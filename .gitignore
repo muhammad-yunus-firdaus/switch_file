@@ -45,5 +45,5 @@ yarn-error.log*
 next-env.d.ts
 
 # project specific exclusions
-rangkuman_projek.md
+rangkuman_projek.txt
 /supabase/

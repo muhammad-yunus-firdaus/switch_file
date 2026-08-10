@@ -11,6 +11,7 @@ const MIME_TO_FORMAT: Record<string, FileFormat> = {
   'image/webp': 'webp',
   'image/heic': 'heic',
   'image/heif': 'heic',
+  'image/avif': 'avif',
   'text/plain': 'txt',
 };
 
@@ -26,6 +27,7 @@ const EXTENSION_TO_FORMAT: Record<string, FileFormat> = {
   webp: 'webp',
   heic: 'heic',
   heif: 'heic',
+  avif: 'avif',
   txt: 'txt',
 };
 
@@ -37,6 +39,7 @@ const FORMAT_LABELS: Record<FileFormat, string> = {
   jpg: 'JPG',
   webp: 'WebP',
   heic: 'HEIC',
+  avif: 'AVIF',
   txt: 'TXT',
   pptx: 'PPTX',
 };
@@ -49,6 +52,7 @@ const FORMAT_MIME: Record<FileFormat, string> = {
   jpg: 'image/jpeg',
   webp: 'image/webp',
   heic: 'image/heic',
+  avif: 'image/avif',
   txt: 'text/plain',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
@@ -61,6 +65,7 @@ const FORMAT_CATEGORY: Record<FileFormat, CategoryFilter> = {
   jpg: 'images',
   webp: 'images',
   heic: 'images',
+  avif: 'images',
   txt: 'documents',
   pptx: 'documents',
 };
@@ -69,10 +74,11 @@ const CONVERSION_TARGETS: Record<FileFormat, FileFormat[]> = {
   pdf: ['png', 'jpg', 'docx', 'txt', 'webp', 'pptx'],
   docx: ['pdf'],
   xlsx: ['pdf'],
-  png: ['jpg', 'webp', 'pdf'],
-  jpg: ['png', 'webp', 'pdf'],
-  webp: ['png', 'jpg', 'pdf'],
-  heic: ['png', 'jpg', 'webp'],
+  png: ['jpg', 'webp', 'avif', 'pdf'],
+  jpg: ['png', 'webp', 'avif', 'pdf'],
+  webp: ['png', 'jpg', 'avif', 'pdf'],
+  heic: ['png', 'jpg', 'webp', 'avif'],
+  avif: ['png', 'jpg', 'webp', 'pdf'],
   txt: [],
   pptx: ['pdf'],
 };
@@ -169,13 +175,13 @@ export function generateFileId(): string {
  * List of all supported file formats.
  */
 export const ALL_FORMATS: FileFormat[] = [
-  'pdf', 'docx', 'xlsx', 'png', 'jpg', 'webp', 'heic', 'txt', 'pptx',
+  'pdf', 'docx', 'xlsx', 'png', 'jpg', 'webp', 'heic', 'avif', 'txt', 'pptx',
 ];
 
 /**
  * List of all image formats.
  */
-export const IMAGE_FORMATS: FileFormat[] = ['png', 'jpg', 'webp', 'heic'];
+export const IMAGE_FORMATS: FileFormat[] = ['png', 'jpg', 'webp', 'heic', 'avif'];
 
 /**
  * List of all document formats.
@@ -186,4 +192,4 @@ export const DOCUMENT_FORMATS: FileFormat[] = ['pdf', 'docx', 'xlsx', 'txt', 'pp
  * Accepted file input string for the file picker.
  */
 export const ACCEPTED_FILE_TYPES =
-  '.pdf,.docx,.xlsx,.xls,.pptx,.png,.jpg,.jpeg,.webp,.heic,.heif,.txt';
+  '.pdf,.docx,.xlsx,.xls,.pptx,.png,.jpg,.jpeg,.webp,.heic,.heif,.avif,.txt';

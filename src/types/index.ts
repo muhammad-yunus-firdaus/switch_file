@@ -7,6 +7,7 @@ export type FileFormat =
   | 'jpg'
   | 'webp'
   | 'heic'
+  | 'avif'
   | 'txt'
   | 'pptx';
 
@@ -42,6 +43,8 @@ export interface FileItem {
   processingTimeMs?: number;
   /** Error message if conversion failed */
   errorMessage?: string;
+  /** Savings percentage for image compression */
+  savedPercent?: number;
 }
 
 /** A single entry in the local conversion history (IndexedDB) */
@@ -66,6 +69,8 @@ export interface ConversionHistoryEntry {
   createdAt: Date;
   /** Converted file blob stored in IndexedDB (optional, for history downloads) */
   convertedBlob?: Blob;
+  /** Savings percentage for image compression */
+  savedPercent?: number;
 }
 
 /** Payload sent to Supabase for anonymous analytics logging */
